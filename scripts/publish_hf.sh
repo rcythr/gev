@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Package and check the 4b-instruct release on Modal, pull it, add the hf/ model card
-# and upload it to a private Hugging Face repo.
+# Package and check the e4b-instruct release on Modal, pull it and upload it to a
+# private Hugging Face repo.
 #
-#   scripts/publish_hf.sh                          # interfaze-ai/lev
-#   REPO=interfaze-ai/other scripts/publish_hf.sh  # another repo
-#   DRY_RUN=1 scripts/publish_hf.sh                # everything but the upload
+#   REPO=<org>/gev scripts/publish_hf.sh
+#   REPO=<org>/gev DRY_RUN=1 scripts/publish_hf.sh   # everything but the upload
 set -euo pipefail
 
-PRESET="${PRESET:-4b-instruct}"
-NAME="${NAME:-lev}"
-REPO="${REPO:-interfaze-ai/lev}"
+PRESET="${PRESET:-e4b-instruct}"
+NAME="${NAME:-gev}"
+REPO="${REPO:?set REPO to the Hub repo to publish to, e.g. REPO=<org>/gev}"
 
 cd "$(dirname "$0")/.."
 release="weights/$NAME"
@@ -30,9 +29,7 @@ modal run modal/app.py::check_release --name "$NAME"
 # The target must be an existing directory: given a missing path, `volume get`
 # writes every file of the release onto that one path.
 mkdir -p weights
-modal volume get --force lev-checkpoints "releases/$NAME" weights/
-cp hf/README.md "$release/README.md"
-cp -R hf/assets "$release/"
+modal volume get --force gev-checkpoints "releases/$NAME" weights/
 
 echo "release ready in $release:"
 ls -la "$release"
@@ -41,4 +38,4 @@ if [[ -n "${DRY_RUN:-}" ]]; then
   exit 0
 fi
 
-uv run lev release publish "$release" --repo "$REPO" --private
+uv run gev release publish "$release" --repo "$REPO" --private

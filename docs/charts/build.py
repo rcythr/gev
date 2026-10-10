@@ -20,7 +20,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from lev.data.s1bench import EVAL_SUBSETS, definition
+from gev.data.s1bench import EVAL_SUBSETS, definition
 from levbench_log import parse
 
 HERE = Path(__file__).parent

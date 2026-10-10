@@ -14,7 +14,7 @@ The core package imports without `torch` on purpose — the schema, prompt layou
 ## 1. Local
 
 ```bash
-git clone <this repo> && cd lev
+git clone https://github.com/rcythr/gev && cd gev
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if you don't have uv
 make setup
 make test          # offline tests; optional model tests need the train extra
@@ -25,8 +25,8 @@ Tests that need torch skip on a bare `uv sync`; the rest must pass. If they do, 
 ```bash
 make plan PRESET=4b-instruct   # the H100 budget for the released preset
 make plan PRESET=9b            # ...or any other preset
-uv run lev --help
-uv run levbench --help
+uv run gev --help
+uv run gevbench --help
 ```
 
 ### Keys (optional)
@@ -39,9 +39,9 @@ cp .env.example .env
 
 | Variable | Needed for |
 | --- | --- |
-| `TYPESAFE_API_KEY` | `levbench eval --backend jev`. Get one at <https://console.typesafe.ai/settings/keys> |
-| `ANTHROPIC_API_KEY` | `levbench compare`, the LLM baseline |
-| `LEVBENCH_LOCAL_API_KEY` | Only if you front a local server with auth |
+| `TYPESAFE_API_KEY` | `gevbench eval --backend jev`. Get one at <https://console.typesafe.ai/settings/keys> |
+| `ANTHROPIC_API_KEY` | `gevbench compare`, the LLM baseline |
+| `GEVBENCH_LOCAL_API_KEY` | Only if you front a local server with auth |
 
 `.env` also reaches `modal deploy` — see [the deploy knobs](#deploy-knobs) below. Anything you `export` wins over it.
 
@@ -66,7 +66,7 @@ For a shared or long-lived deployment, use a real Modal Secret instead:
 
 ```bash
 modal secret create huggingface HF_TOKEN=hf_...
-export LEV_HF_SECRET=huggingface
+export GEV_HF_SECRET=huggingface
 ```
 
 <a id="deploy-knobs"></a>
@@ -76,19 +76,19 @@ Set on the machine where `modal deploy` runs, from the environment or `.env`; th
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `LEV_SERVE_PRESET` | `4b` | Which preset's newest checkpoint to serve. `make deploy PRESET=...` sets it |
-| `LEV_SERVE_MODEL` | unset | Serve this model frozen instead — no adapter, binary Noul, the zero-shot baseline |
-| `LEV_SERVE_COMPILE` | `0` | `torch.compile`. Off unless asked: measured slower than eager here (ADR-023) |
-| `LEV_SERVE_MAX_LABEL_OPTIONS` | unset | Cap on label options. Unset means Mode A up to the tokenizer limit (ADR-025) |
-| `LEV_SERVE_PROMPT` | the preset's | Override the prompt style, mainly for a frozen model |
-| `LEV_SERVE_SKIP_CODES` | `1` | Skip label codes that tokenize to more than one token (ADR-028) |
-| `LEV_SERVE_CONCURRENCY` | `32` | Requests one container handles at once, and the server's `max_pending`; concurrent requests share batched forwards |
-| `LEV_SERVE_WARM` | `0` | Containers kept running. One removes the 20-55 s cold start, at the cost of an idle GPU |
-| `LEV_SERVE_REGION` | unset | A Modal region near the client; the measured 280 ms round trip is a continent, not a server |
-| `LEV_SERVE_SCALEDOWN` | `300` | Idle seconds before a container stops |
-| `LEV_SERVE_MAX` | unset | Container ceiling; unset means Modal's own limit. Pin it for a benchmark sweep, where a parallel client would otherwise open a GPU per burst of requests |
+| `GEV_SERVE_PRESET` | `4b` | Which preset's newest checkpoint to serve. `make deploy PRESET=...` sets it |
+| `GEV_SERVE_MODEL` | unset | Serve this model frozen instead — no adapter, binary Noul, the zero-shot baseline |
+| `GEV_SERVE_COMPILE` | `0` | `torch.compile`. Off unless asked: measured slower than eager here (ADR-023) |
+| `GEV_SERVE_MAX_LABEL_OPTIONS` | unset | Cap on label options. Unset means Mode A up to the tokenizer limit (ADR-025) |
+| `GEV_SERVE_PROMPT` | the preset's | Override the prompt style, mainly for a frozen model |
+| `GEV_SERVE_SKIP_CODES` | `1` | Skip label codes that tokenize to more than one token (ADR-028) |
+| `GEV_SERVE_CONCURRENCY` | `32` | Requests one container handles at once, and the server's `max_pending`; concurrent requests share batched forwards |
+| `GEV_SERVE_WARM` | `0` | Containers kept running. One removes the 20-55 s cold start, at the cost of an idle GPU |
+| `GEV_SERVE_REGION` | unset | A Modal region near the client; the measured 280 ms round trip is a continent, not a server |
+| `GEV_SERVE_SCALEDOWN` | `300` | Idle seconds before a container stops |
+| `GEV_SERVE_MAX` | unset | Container ceiling; unset means Modal's own limit. Pin it for a benchmark sweep, where a parallel client would otherwise open a GPU per burst of requests |
 
-> Leave these **commented** in `.env` rather than writing `VAR=`. For `LEV_SERVE_CONCURRENCY`, `LEV_SERVE_WARM` and `LEV_SERVE_SCALEDOWN` the empty string is not the same as unset: `int("")` raises at import. The other knobs treat an empty value as unset.
+> Leave these **commented** in `.env` rather than writing `VAR=`. For `GEV_SERVE_CONCURRENCY`, `GEV_SERVE_WARM` and `GEV_SERVE_SCALEDOWN` the empty string is not the same as unset: `int("")` raises at import. The other knobs treat an empty value as unset.
 
 ### The order
 
@@ -115,11 +115,11 @@ make smoke-local STEPS=20     # 0.8B on CPU; slow, but it is the real loop
 
 | Volume | Holds | Why not in the image |
 | --- | --- | --- |
-| `lev-models` | downloaded backbones | ~8 GB per checkpoint; baking it in makes every rebuild slow |
-| `lev-checkpoints` | adapters, calibration profiles | written *during* training so a preemption is survivable |
-| `lev-data` | prepared mixtures | reused across runs and ablations |
+| `gev-models` | downloaded backbones | ~8 GB per checkpoint; baking it in makes every rebuild slow |
+| `gev-checkpoints` | adapters, calibration profiles | written *during* training so a preemption is survivable |
+| `gev-data` | prepared mixtures | reused across runs and ablations |
 
-The server exposes the preset named by `LEV_SERVE_PRESET` (`make deploy PRESET=...` sets it), else `SERVE_PRESET` in `modal/app.py` (`4b`). With no checkpoint for that preset it serves the untrained backbone with a warning. `GET /health` reports which checkpoint resolved, whether a Mode B head loaded, and whether a calibration profile is in effect; check it before reading a number off any eval. `make serve` gives an ephemeral dev URL that any other `modal run` on the app takes over, so use `make deploy` for anything you benchmark.
+The server exposes the preset named by `GEV_SERVE_PRESET` (`make deploy PRESET=...` sets it), else `SERVE_PRESET` in `modal/app.py` (`4b`). With no checkpoint for that preset it serves the untrained backbone with a warning. `GET /health` reports which checkpoint resolved, whether a Mode B head loaded, and whether a calibration profile is in effect; check it before reading a number off any eval. `make serve` gives an ephemeral dev URL that any other `modal run` on the app takes over, so use `make deploy` for anything you benchmark.
 
 ---
 
@@ -129,7 +129,7 @@ Nothing is Modal-specific except `modal/app.py`. With a local H100:
 
 ```bash
 uv sync --extra train
-uv run lev train --preset 4b-instruct --data data/mixture   # -> checkpoints/lev-instruct
+uv run gev train --preset 4b-instruct --data data/mixture   # -> checkpoints/gev-instruct
 ```
 
 ---

@@ -39,7 +39,7 @@ make setup-train                                  # torch, transformers, peft
 make test                                         # the full suite: no GPU, no network, no API keys
 make data                                         # 29 public sources -> train / calibration / test
 make smoke-local STEPS=20                         # prove the path on Gemma 4 E2B first
-uv run lev plan --preset e4b-instruct --data data/mixture --gpu h100
+uv run gev plan --preset e4b-instruct --data data/mixture --gpu h100
 make train-local PRESET=e4b-instruct              # resumes the newest checkpoint; FRESH=1 starts over
 make calibrate-local PRESET=e4b-instruct
 ```
@@ -62,23 +62,23 @@ memory           14.9 GB state, 65.1 GB headroom of 80 GB
 | L4 24GB (`l4`)                          |              72 | 8 x 4                      |
 | DGX Spark (`spark`)                     |              87 | 32 x 1                     |
 
-The H100 figure is scaled from lev's measured Qwen run; the others scale it by peak bf16 throughput and are unmeasured. The 128-token prompt length was measured under the Qwen tokenizer: `lev plan --data` re-measures it under Gemma's. `--per-device-batch` and `--grad-accum` fit the run to the card while the optimiser batch stays 32, and `--keep-last N` bounds disk.
+The H100 figure is scaled from lev's measured Qwen run; the others scale it by peak bf16 throughput and are unmeasured. The 128-token prompt length was measured under the Qwen tokenizer: `gev plan --data` re-measures it under Gemma's. `--per-device-batch` and `--grad-accum` fit the run to the card while the optimiser batch stays 32, and `--keep-last N` bounds disk.
 
 Training stops before loading the model if the `gemma` prompt framing differs from the tokenizer's own chat template, and prints both. The data build refuses any source that resolves to one of the 13 S1Bench subsets. [TRAINING.md](docs/TRAINING.md) covers the pipeline step by step; [SETUP.md](docs/SETUP.md) covers Modal.
 
 ## Quickstart
 
 ```bash
-pip install "lev[serve] @ git+https://github.com/rcythr/gev#subdirectory=packages/lev"
+pip install "gev[serve] @ git+https://github.com/rcythr/gev#subdirectory=packages/gev"
 ```
 
 In-process, against a checkpoint you trained. Omit the checkpoint to serve the untrained instruct model zero-shot:
 
 ```python
-import lev
+import gev
 
-model = lev.load(
-    "checkpoints/lev-e4b-instruct", model_id="google/gemma-4-E4B-it", prompt_style="gemma"
+model = gev.load(
+    "checkpoints/gev-e4b-instruct", model_id="google/gemma-4-E4B-it", prompt_style="gemma"
 )
 result = model.system_one(
     "Hi, I was charged twice for my order #4471 and I want a refund.",
@@ -104,7 +104,7 @@ result.usage.output_tokens  # 0
 Or as a server, with any TypeSafe client:
 
 ```bash
-lev serve --checkpoint checkpoints/lev-e4b-instruct --model google/gemma-4-E4B-it --prompt-style gemma
+gev serve --checkpoint checkpoints/gev-e4b-instruct --model google/gemma-4-E4B-it --prompt-style gemma
 ```
 
 ```python
@@ -122,7 +122,7 @@ response = client.system_one(
 )
 ```
 
-Python 3.12+. A packaged release (`lev release build`) records its base model and prompt style in `lev_release.json`, so `lev serve --checkpoint <release>` needs no other flags.
+Python 3.12+. A packaged release (`gev release build`) records its base model and prompt style in `gev_release.json`, so `gev serve --checkpoint <release>` needs no other flags.
 
 ## Why it works
 
@@ -160,7 +160,7 @@ Each option gets a short code, and the answer is read from the next-token logits
 <p align="center"><img src="hf/assets/accuracy-by-subset.png" alt="lev and Jev accuracy on each S1Bench subset" width="100%"></p>
 -->
 
-lev, the Qwen3.5-4B model gev is forked from, scored **0.689 macro on all 13 S1Bench subsets** against Jev's 0.761, through the same harness on the same 3,880 items. These are lev's numbers, not gev's; a Gemma run gets scored the same way with `make s1bench` and `levbench eval`.
+lev, the Qwen3.5-4B model gev is forked from, scored **0.689 macro on all 13 S1Bench subsets** against Jev's 0.761, through the same harness on the same 3,880 items. These are lev's numbers, not gev's; a Gemma run gets scored the same way with `make s1bench` and `gevbench eval`.
 
 | subset               | task                           | lev (Qwen3.5-4B) |       Jev | always the most common label |
 | -------------------- | ------------------------------ | ---------------: | --------: | ---------------------------: |
@@ -200,19 +200,19 @@ Measured on lev's Qwen backbone; whether each still pays on Gemma is unmeasured.
 
 ## Measure it yourself
 
-`levbench` measures gev, Jev, and any `/v1/systemone`-compatible server through the same code path: one changed flag.
+`gevbench` measures gev, Jev, and any `/v1/systemone`-compatible server through the same code path: one changed flag.
 
 ```bash
-levbench eval  --backend jev                       # the hosted API
-levbench eval  --backend lev  --tasks data/eval    # localhost:8000 by default
-levbench compare                                   # vs an LLM baseline
-levbench sweep                                     # batching economics
-levbench confidence                                # which statistic is `confidence`?
+gevbench eval  --backend jev                       # the hosted API
+gevbench eval  --backend gev  --tasks data/eval    # localhost:8000 by default
+gevbench compare                                   # vs an LLM baseline
+gevbench sweep                                     # batching economics
+gevbench confidence                                # which statistic is `confidence`?
 ```
 
 It reports accuracy, log loss, Brier, **ECE with reliability bins**, selective accuracy, p50 latency, tokens, cost, and schema-retry counts; its test suite runs offline against a fake transport, with no key. Omit `--tasks` and you get a built-in 24-item fixture, which is a smoke test: at n=24 the 95% interval is **±16 accuracy points**. `make eval-set` writes the real held-out set and `make s1bench` the S1Bench subsets. [ADR-015 →](docs/DECISIONS.md#adr-015--the-24-item-task-set-is-a-fixture-not-a-benchmark)
 
-`levbench` deliberately does **not** depend on the model package. A measuring instrument that imports the thing it measures is not an instrument. [ADR-010 →](docs/DECISIONS.md#adr-010--two-packages-one-workspace)
+`gevbench` deliberately does **not** depend on the model package. A measuring instrument that imports the thing it measures is not an instrument. [ADR-010 →](docs/DECISIONS.md#adr-010--two-packages-one-workspace)
 
 ## Watch it decide
 
@@ -220,10 +220,10 @@ The model plays Snake, one `/v1/systemone` call per move, against any System One
 
 ```bash
 uv sync --extra demo
-uv run levbench snake --backend planner                        # no server: the planner plays
+uv run gevbench snake --backend planner                        # no server: the planner plays
 make snake URL=http://localhost:8000                           # gev
-uv run levbench snake --backend jev --steps 200 --record artifacts/snake/jev.jsonl
-uv run levbench replay artifacts/snake/jev.jsonl              # play it back at original speed
+uv run gevbench snake --backend jev --steps 200 --record artifacts/snake/jev.jsonl
+uv run gevbench replay artifacts/snake/jev.jsonl              # play it back at original speed
 ```
 
 The display shows the board, the four direction probabilities with the model's pick marked and unsafe moves flagged, and the model's dead-end-risk and food-reachability estimates beside the planner's ground truth. **By default a planner shield overrules an unsafe first choice** and the display marks it `SHIELD`; `--unassisted` removes the shield, so deaths end the run.
@@ -240,8 +240,8 @@ The display shows the board, the four direction probabilities with the model's p
 
 ```text
 packages/
-  lev/          the model     — schema, prompt layouts, router, readouts, calibration, loader, server, S1Bench export
-  levbench/     the harness   — accuracy, ECE, cost, latency, batching economics, Snake
+  gev/          the model     — schema, prompt layouts, router, readouts, calibration, loader, server, S1Bench export
+  gevbench/     the harness   — accuracy, ECE, cost, latency, batching economics, Snake
 notebooks/      train_colab   — the whole training path on a Colab H100, A100 or L4
 modal/          app.py        — train / calibrate / serve / check a release on one H100
 hf/             README.md     — lev's Hub model card, and the charts it shows
@@ -254,8 +254,6 @@ docs/           ARCHITECTURE  — the design, and every model it was derived fro
                 charts/       — the lev-vs-Jev comparison page, built from the logs
 data/           sample state + the S1Bench snapshot the analysis rests on
 ```
-
-The Python package and commands keep lev's names (`lev`, `levbench`).
 
 ## Prior work
 
@@ -272,7 +270,7 @@ gev is a fork of [lev](https://github.com/InterfazeAI/lev) by Interfaze; the sys
 | [jeff](https://github.com/logan-markewich/jeff), [Nimble](https://github.com/bespokelabsai/nimble), [typed-decisions](https://github.com/kotoba-lang/typed-decisions) | encoder and LoRA baselines, and the latency numbers that ruled out diffusion; Nimble also pins the S1Bench items      |
 | [JEVfire](https://github.com/kikoncuo/jevfire)                                                                                                                        | the shape of this README                                                                                              |
 
-Benchmark data is a snapshot of a third-party S1Bench dashboard (`data/s1bench-snapshot.json`), not produced by this project; its caveats are in [FINDINGS.md §9](docs/FINDINGS.md). The 13 subset definitions (item ids, label counts, instructions and criteria) come from Nimble's public-benchmark manifests at commit `62076b4`, vendored in `packages/lev/src/lev/data/s1bench_subsets/`.
+Benchmark data is a snapshot of a third-party S1Bench dashboard (`data/s1bench-snapshot.json`), not produced by this project; its caveats are in [FINDINGS.md §9](docs/FINDINGS.md). The 13 subset definitions (item ids, label counts, instructions and criteria) come from Nimble's public-benchmark manifests at commit `62076b4`, vendored in `packages/gev/src/gev/data/s1bench_subsets/`.
 
 Not affiliated with or endorsed by TypeSafe AI, Interfaze or Google.
 

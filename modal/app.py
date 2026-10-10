@@ -1,4 +1,4 @@
-"""Build data, train, calibrate, evaluate and serve lev on Modal. See docs/SETUP.md.
+"""Build data, train, calibrate, evaluate and serve gev on Modal. See docs/SETUP.md.
 
 Use `modal deploy` for a stable URL: other ephemeral runs can take over `modal serve`'s
 `-dev` label.
@@ -11,8 +11,8 @@ from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal
 
-if TYPE_CHECKING:  # `lev` is installed in the container, not where deploy runs.
-    from lev.types import Answer
+if TYPE_CHECKING:  # `gev` is installed in the container, not where deploy runs.
+    from gev.types import Answer
 
 import modal
 
@@ -23,7 +23,7 @@ try:
 except ModuleNotFoundError:
     pass
 
-APP_NAME = "lev"
+APP_NAME = "gev"
 
 # From this file, not the cwd: `modal run` may start anywhere, and a relative path mounts nothing.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -56,17 +56,17 @@ image = (
     .env({"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
     .pip_install("causal-conv1d", extra_options="--no-build-isolation")
     .add_local_dir(
-        REPO_ROOT / "packages" / "lev" / "src" / "lev",
-        remote_path="/root/lev",
+        REPO_ROOT / "packages" / "gev" / "src" / "gev",
+        remote_path="/root/gev",
         ignore=["**/__pycache__", "**/*.pyc"],
     )
 )
 
 app = modal.App(APP_NAME, image=image)
 
-models = modal.Volume.from_name("lev-models", create_if_missing=True)
-checkpoints = modal.Volume.from_name("lev-checkpoints", create_if_missing=True)
-datasets_vol = modal.Volume.from_name("lev-data", create_if_missing=True)
+models = modal.Volume.from_name("gev-models", create_if_missing=True)
+checkpoints = modal.Volume.from_name("gev-checkpoints", create_if_missing=True)
+datasets_vol = modal.Volume.from_name("gev-data", create_if_missing=True)
 
 MODELS_DIR = "/models"
 CKPT_DIR = "/checkpoints"
@@ -78,18 +78,18 @@ VOLUMES: dict[str | PurePosixPath, modal.Volume | modal.CloudBucketMount] = {
     DATA_DIR: datasets_vol,
 }
 
-# The preset `serve` exposes when `LEV_SERVE_PRESET` is unset. Not a function
+# The preset `serve` exposes when `GEV_SERVE_PRESET` is unset. Not a function
 # argument: Modal requires `@modal.asgi_app` functions to take none.
 SERVE_PRESET = "e4b-instruct"
 
 
 def _hf_secrets() -> list:
-    """The Secret named by `LEV_HF_SECRET`, else the local `HF_TOKEN`, else none.
+    """The Secret named by `GEV_HF_SECRET`, else the local `HF_TOKEN`, else none.
 
     Never an unconditional `Secret.from_name`: it fails at function creation when the
     Secret is missing, and the backbones are public.
     """
-    named = os.environ.get("LEV_HF_SECRET")
+    named = os.environ.get("GEV_HF_SECRET")
     if named:
         return [modal.Secret.from_name(named, required_keys=[])]
     token = os.environ.get("HF_TOKEN")
@@ -98,38 +98,38 @@ def _hf_secrets() -> list:
 
 # Deploy knobs (docs/SETUP.md), read where `modal deploy` runs: decorator arguments are
 # fixed at import, so these cannot travel as Secrets.
-#   LEV_SERVE_CONCURRENCY  per-container inputs, also the server's max_pending (32; ADR-030)
-#   LEV_SERVE_WARM         containers kept running (0); one removes the 20-55 s cold start
-#   LEV_SERVE_REGION       Modal region near the client (unset); the measured 280 ms RTT is distance
-#   LEV_SERVE_SCALEDOWN    idle seconds before a container stops (300)
-#   LEV_SERVE_MAX          container ceiling (unset: Modal's limit); pin it for benchmark sweeps
-SERVE_CONCURRENCY = int(os.environ.get("LEV_SERVE_CONCURRENCY", "32"))
-SERVE_WARM = int(os.environ.get("LEV_SERVE_WARM", "0"))
-SERVE_REGION = os.environ.get("LEV_SERVE_REGION")
-SERVE_SCALEDOWN = int(os.environ.get("LEV_SERVE_SCALEDOWN", "300"))
-SERVE_MAX = int(os.environ["LEV_SERVE_MAX"]) if os.environ.get("LEV_SERVE_MAX") else None
+#   GEV_SERVE_CONCURRENCY  per-container inputs, also the server's max_pending (32; ADR-030)
+#   GEV_SERVE_WARM         containers kept running (0); one removes the 20-55 s cold start
+#   GEV_SERVE_REGION       Modal region near the client (unset); the measured 280 ms RTT is distance
+#   GEV_SERVE_SCALEDOWN    idle seconds before a container stops (300)
+#   GEV_SERVE_MAX          container ceiling (unset: Modal's limit); pin it for benchmark sweeps
+SERVE_CONCURRENCY = int(os.environ.get("GEV_SERVE_CONCURRENCY", "32"))
+SERVE_WARM = int(os.environ.get("GEV_SERVE_WARM", "0"))
+SERVE_REGION = os.environ.get("GEV_SERVE_REGION")
+SERVE_SCALEDOWN = int(os.environ.get("GEV_SERVE_SCALEDOWN", "300"))
+SERVE_MAX = int(os.environ["GEV_SERVE_MAX"]) if os.environ.get("GEV_SERVE_MAX") else None
 
 
 def _prompt_style(value: str | None) -> Literal["plain", "chat", "gemma"] | None:
     if not value:
         return None
     if value not in ("plain", "chat", "gemma"):
-        raise ValueError(f"LEV_SERVE_PROMPT={value!r} is not 'plain', 'chat' or 'gemma'")
+        raise ValueError(f"GEV_SERVE_PROMPT={value!r} is not 'plain', 'chat' or 'gemma'")
     return value
 
 
 def _serve_overrides() -> list:
-    """The set `LEV_SERVE_*` overrides as a Secret: local env does not reach the container."""
+    """The set `GEV_SERVE_*` overrides as a Secret: local env does not reach the container."""
     overrides: dict[str, str | None] = {
         key: value
         for key in (
-            "LEV_SERVE_PRESET",
-            "LEV_SERVE_MODEL",
-            "LEV_SERVE_COMPILE",
-            "LEV_SERVE_MAX_LABEL_OPTIONS",
-            "LEV_SERVE_PROMPT",
-            "LEV_SERVE_SKIP_CODES",
-            "LEV_SERVE_CONCURRENCY",
+            "GEV_SERVE_PRESET",
+            "GEV_SERVE_MODEL",
+            "GEV_SERVE_COMPILE",
+            "GEV_SERVE_MAX_LABEL_OPTIONS",
+            "GEV_SERVE_PROMPT",
+            "GEV_SERVE_SKIP_CODES",
+            "GEV_SERVE_CONCURRENCY",
         )
         if (value := os.environ.get(key))
     }
@@ -170,13 +170,13 @@ def train(
     max_steps: int | None = None,
     fresh: bool = False,
 ) -> dict:
-    """Fine-tune on one H100. See `lev.train.config.PRESETS`.
+    """Fine-tune on one H100. See `gev.train.config.PRESETS`.
 
     Resumes from the newest checkpoint in the preset's directory unless
     `--fresh`; `--resume <path>` names one explicitly.
     """
-    from lev.train.config import H100, PRESETS
-    from lev.train.loop import run_training
+    from gev.train.config import H100, PRESETS
+    from gev.train.loop import run_training
 
     if preset not in PRESETS:
         raise ValueError(f"unknown preset {preset!r}; have {sorted(PRESETS)}")
@@ -208,7 +208,7 @@ def build_data(limit_per_source: int = 20_000, n_examples: int = 200_000) -> dic
 
     Run it once, before `train`.
     """
-    from lev.data.build import build_dataset
+    from gev.data.build import build_dataset
 
     # The HF download cache lives on the volume, so rebuilds reuse the corpora.
     manifest = build_dataset(
@@ -253,8 +253,8 @@ def calibrate(
 
     Separate from `train` so re-fitting needs no fine-tune.
     """
-    from lev.train.calibration_run import fit_profile
-    from lev.train.config import PRESETS
+    from gev.train.calibration_run import fit_profile
+    from gev.train.config import PRESETS
 
     config = replace(PRESETS[preset], output_dir=f"{CKPT_DIR}/{preset}")
     return fit_profile(
@@ -278,10 +278,10 @@ def evaluate(
     """Score the newest checkpoint on a held-out split, with and without the
     fitted temperature.
     """
-    from lev.calibrate import CalibrationProfile
-    from lev.train.checkpoints import CALIBRATION
-    from lev.train.config import PRESETS
-    from lev.train.evaluate import evaluate_split
+    from gev.calibrate import CalibrationProfile
+    from gev.train.checkpoints import CALIBRATION
+    from gev.train.config import PRESETS
+    from gev.train.evaluate import evaluate_split
 
     config = replace(PRESETS[preset], output_dir=f"{CKPT_DIR}/{preset}")
 
@@ -313,38 +313,38 @@ def evaluate(
     scaledown_window=SERVE_SCALEDOWN,
     min_containers=SERVE_WARM,
     max_containers=SERVE_MAX,
-    region=SERVE_REGION or None,  # `LEV_SERVE_REGION=` must mean unset, not ""
+    region=SERVE_REGION or None,  # `GEV_SERVE_REGION=` must mean unset, not ""
 )
 @modal.concurrent(max_inputs=SERVE_CONCURRENCY)
 @modal.asgi_app()
 def serve():
     """Serve `/v1/systemone`, wire-compatible with the TypeSafe API.
 
-        levbench eval --backend lev --base-url <the URL Modal prints> \
+        gevbench eval --backend gev --base-url <the URL Modal prints> \
                       --tasks data/eval
 
     With no trained checkpoint for the preset it serves the base backbone
     uncalibrated, with a warning, rather than refusing to start.
     """
-    from lev.server import create_app
-    from lev.train.checkpoints import ADAPTER_WEIGHTS, latest_checkpoint
-    from lev.train.config import PRESETS
+    from gev.server import create_app
+    from gev.train.checkpoints import ADAPTER_WEIGHTS, latest_checkpoint
+    from gev.train.config import PRESETS
 
-    preset = os.environ.get("LEV_SERVE_PRESET", SERVE_PRESET)
+    preset = os.environ.get("GEV_SERVE_PRESET", SERVE_PRESET)
     if preset not in PRESETS:
-        raise ValueError(f"LEV_SERVE_PRESET={preset!r} is not a preset; have {sorted(PRESETS)}")
+        raise ValueError(f"GEV_SERVE_PRESET={preset!r} is not a preset; have {sorted(PRESETS)}")
     config = PRESETS[preset]
 
     # Off unless asked: measured slower than eager on this model (ADR-023).
-    compile = os.environ.get("LEV_SERVE_COMPILE", "0") in ("1", "true", "yes")
+    compile = os.environ.get("GEV_SERVE_COMPILE", "0") in ("1", "true", "yes")
     # Default None: Mode A up to the tokenizer limit (ADR-025). Set to force a
     # lower cap, e.g. 26 to reproduce the ADR-020 policy.
-    cap_env = os.environ.get("LEV_SERVE_MAX_LABEL_OPTIONS")
+    cap_env = os.environ.get("GEV_SERVE_MAX_LABEL_OPTIONS")
     max_label_options = int(cap_env) if cap_env else None
-    prompt_style = _prompt_style(os.environ.get("LEV_SERVE_PROMPT")) or config.prompt_style
-    skip_codes = os.environ.get("LEV_SERVE_SKIP_CODES", "1") not in ("0", "false", "no")
+    prompt_style = _prompt_style(os.environ.get("GEV_SERVE_PROMPT")) or config.prompt_style
+    skip_codes = os.environ.get("GEV_SERVE_SKIP_CODES", "1") not in ("0", "false", "no")
     # A frozen model is a different backbone from the adapter's, so no checkpoint.
-    frozen = os.environ.get("LEV_SERVE_MODEL")
+    frozen = os.environ.get("GEV_SERVE_MODEL")
     if frozen:
         print(f"serving {frozen} frozen: no adapter, binary Noul, raw softmax")
         checkpoint_dir, model_id = None, frozen
@@ -384,10 +384,10 @@ def export_checkpoint(preset: str = "e4b-instruct", name: str | None = None) -> 
     """Package the newest checkpoint of a preset into `/checkpoints/releases/<name>`.
 
     No GPU: it copies files (adapter, head, tokenizer, calibration, manifest)
-    for `make weights` to pull and `lev release publish` to upload.
+    for `make weights` to pull and `gev release publish` to upload.
     """
-    from lev.release import build_release
-    from lev.train.config import PRESETS
+    from gev.release import build_release
+    from gev.train.config import PRESETS
 
     target = name or preset
     manifest = build_release(
@@ -408,7 +408,7 @@ def export_checkpoint(preset: str = "e4b-instruct", name: str | None = None) -> 
 
 @app.function(gpu="H100", volumes=VOLUMES, secrets=SECRETS, timeout=30 * 60)
 def check_release(name: str = "e4b-instruct") -> dict:
-    """Load a packaged release the way a user will -- `lev.load` on the flat
+    """Load a packaged release the way a user will -- `gev.load` on the flat
     directory, then the HTTP server over it -- and answer one request of every
     question type through each. Raises if the release loads without its
     calibration or head, or if the two paths disagree.
@@ -416,8 +416,8 @@ def check_release(name: str = "e4b-instruct") -> dict:
     import json
 
     from fastapi.testclient import TestClient
-    from lev import load
-    from lev.server import create_app
+    from gev import load
+    from gev.server import create_app
 
     release = f"{RELEASES_DIR}/{name}"
     request = {
@@ -458,7 +458,7 @@ def check_release(name: str = "e4b-instruct") -> dict:
         gaps = [abs(answer["probabilities"][k] - p) for k, p in expected["probabilities"].items()]
         gap = max(gaps, default=0.0)
         if answer.get("choice") != expected.get("choice") or gap > 1e-3:
-            raise RuntimeError(f"server and lev.load disagree on {question}: {answer}, {expected}")
+            raise RuntimeError(f"server and gev.load disagree on {question}: {answer}, {expected}")
 
     print(json.dumps({"health": health, "response": served}, indent=2))
     return {"health": health, "response": served}
@@ -568,7 +568,7 @@ def _probabilities(answer: Answer) -> dict[Any, float]:
 
     Choice keys are strings and Score keys ints, so compare a map only with the same answer's.
     """
-    from lev.types import NoulAnswer  # noqa: PLC0415
+    from gev.types import NoulAnswer  # noqa: PLC0415
 
     if isinstance(answer, NoulAnswer):
         return dict(answer.probabilities) if answer.probabilities else {1: answer.noul}
@@ -584,11 +584,11 @@ def profile_engine(preset: str = "e4b-instruct", rounds: int = 20) -> dict:
     import statistics
     import time
 
-    import lev.model as engine_module
+    import gev.model as engine_module
     import torch
-    from lev.model import DecisionEngine, EngineConfig, load
-    from lev.train.config import PRESETS
-    from lev.types import Choice, Noul, Score
+    from gev.model import DecisionEngine, EngineConfig, load
+    from gev.train.config import PRESETS
+    from gev.types import Choice, Noul, Score
 
     config = PRESETS[preset]
     engine = load(

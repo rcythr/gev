@@ -1,0 +1,115 @@
+"""FastAPI endpoints for typed decisions and model health.
+
+Status codes: 422 malformed, 529 still loading, 503 past `max_pending` in flight
+or worker stopped, 504 queued past `timeout`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any, Literal
+
+# Module level: FastAPI resolves the endpoint's string annotations here.
+from fastapi import Request
+
+from .batcher import Batcher, ClientGone, Overloaded, WorkerStopped
+from .model import load
+from .prompt import PromptStyle
+from .types import SystemOneRequest, SystemOneResponse
+
+
+def create_app(
+    checkpoint_dir: str | None = None,
+    model_cache: str | None = None,
+    calibration: str | None = None,
+    model_id: str = "google/gemma-4-E4B-it",
+    noul_readout: Literal["rating", "binary"] | None = None,
+    compile: bool = False,
+    max_label_options: int | None = None,
+    prompt_style: PromptStyle | None = None,
+    skip_multi_token_codes: bool = True,
+    max_pending: int = 64,
+    max_batch_tokens: int = 16384,
+    timeout: float = 30.0,
+) -> Any:
+    from fastapi import FastAPI, HTTPException, Response
+    from starlette.concurrency import run_in_threadpool
+
+    from . import __version__
+
+    app = FastAPI(title="gev", version=__version__)
+    state: dict[str, Any] = {"engine": None, "batcher": None}
+
+    @app.on_event("startup")
+    def _load() -> None:
+        engine = load(
+            checkpoint_dir,
+            model_id=model_id,
+            cache_dir=model_cache,
+            calibration=calibration,
+            noul_readout=noul_readout,
+            prompt_style=prompt_style,
+            compile=compile,
+            max_label_options=max_label_options,
+            skip_multi_token_codes=skip_multi_token_codes,
+        )
+        state["batcher"] = Batcher(
+            engine, max_pending=max_pending, max_batch_tokens=max_batch_tokens, timeout=timeout
+        )
+        state["engine"] = engine
+
+    # Async, so a saturated thread pool cannot starve it.
+    @app.get("/health")
+    async def health() -> dict:
+        engine = state["engine"]
+        if engine is None:
+            return {"status": "loading", "model": model_id}
+        config = engine.config
+        return {
+            "status": "ok" if state["batcher"].alive else "worker stopped",
+            "model": config.model_id,
+            "checkpoint": str(engine.checkpoint) if engine.checkpoint else None,
+            "calibrated": bool(engine.calibration.temperatures),
+            "mode_b": engine.mode_b_head is not None,
+            "noul_readout": config.noul_readout,
+            "max_label_options": config.max_label_options,
+            "order_average": config.order_average,
+            "prefix_mode": config.prefix_mode,
+            "compiled": config.compile,
+            "prompt_style": config.prompt_style,
+            "skip_multi_token_codes": config.skip_multi_token_codes,
+            "in_flight": state["batcher"].pending,
+            "max_pending": max_pending,
+        }
+
+    @app.post("/v1/systemone", response_model=SystemOneResponse)
+    async def system_one(body: SystemOneRequest, request: Request) -> Any:
+        if state["engine"] is None:
+            raise HTTPException(status_code=529, detail="model still loading")
+        if not body.questions:
+            raise HTTPException(status_code=422, detail="at least one question required")
+        try:
+            prepared = await run_in_threadpool(state["engine"].prepare, body.state, body.questions)
+            return await state["batcher"].submit(prepared, lambda: _disconnected(request))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Overloaded as exc:
+            raise HTTPException(
+                status_code=503, detail=str(exc), headers={"Retry-After": "1"}
+            ) from exc
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except WorkerStopped as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ClientGone:
+            return Response(status_code=499)  # nobody is listening; for the access log
+
+    return app
+
+
+async def _disconnected(request: Request) -> None:
+    """Return when the client hangs up. With the body read, the next ASGI message is
+    the disconnect; any other means none is reported, so wait forever, not spin."""
+    if (await request.receive())["type"] == "http.disconnect":
+        return
+    await asyncio.Event().wait()

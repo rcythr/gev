@@ -265,7 +265,7 @@ H100 effective       ~400 TFLOP/s bf16 (assumed at design time; ~88 measured)
 
 Cross-check on step count: batch 32 gives 6,250 steps/epoch, 18,750 total.
 
-Two corrections this arithmetic has already needed, both from [ADR-016](DECISIONS.md#adr-016--sequence-length-is-measured-and-the-budget-was-wrong-by-10x) and [ADR-017](DECISIONS.md#adr-017--batches-are-length-bucketed-and-the-budget-was-wrong-again): the 128-token mean is measured, not assumed — an earlier guess of 1,200 put this at 16 hours — and the model computes on the padded batch rectangle, not on real tokens, which cost a further 4.4× until batches were length-bucketed. The first measured run averaged ~4,400 real tok/s: 18,750 steps × 32 × 128 tokens in ~4h50 (ADR-018), and the released run took 7.8 h, so 1.7 h was a floor by a factor of four; `lev plan` uses the throughput measured on the released run (8.75e13 FLOP/s).
+Two corrections this arithmetic has already needed, both from [ADR-016](DECISIONS.md#adr-016--sequence-length-is-measured-and-the-budget-was-wrong-by-10x) and [ADR-017](DECISIONS.md#adr-017--batches-are-length-bucketed-and-the-budget-was-wrong-again): the 128-token mean is measured, not assumed — an earlier guess of 1,200 put this at 16 hours — and the model computes on the padded batch rectangle, not on real tokens, which cost a further 4.4× until batches were length-bucketed. The first measured run averaged ~4,400 real tok/s: 18,750 steps × 32 × 128 tokens in ~4h50 (ADR-018), and the released run took 7.8 h, so 1.7 h was a floor by a factor of four; `gev plan` uses the throughput measured on the released run (8.75e13 FLOP/s).
 
 **A full run is hours, not days.** That is the real consequence of choosing LoRA on a 4B: you can afford many full runs, which means ablations — 2B vs 4B, Mode B on vs off, temperature per-type vs global — are affordable rather than aspirational. Budget the H100 for **ablations, not for one heroic run**.
 
@@ -285,17 +285,17 @@ Stated plainly, because the distinction matters:
 
 - **Verified here:** the Qwen3.5 config facts (hybrid layer split, context, multimodal tokens), the memory arithmetic, every S1Bench number in §2, and the architecture of each implementation surveyed.
 - **Taken from others' published numbers:** the 0.7189 target (reflex), 0.7033 (decider-2b), the schema-first cost table, ECE 0.0849 vs 0.4252.
-- **Measured since:** the 128-token mean and the padding factor (§5.8); that both readouts serve and train; that `levbench` on S1Bench's pinned items reproduces Jev's published per-subset numbers within 0.8 pp on all 13 subsets (FINDINGS §17).
+- **Measured since:** the 128-token mean and the padding factor (§5.8); that both readouts serve and train; that `gevbench` on S1Bench's pinned items reproduces Jev's published per-subset numbers within 0.8 pp on all 13 subsets (FINDINGS §17).
 - **Measured after training:** three 4B checkpoints trained, calibrated and scored on S1Bench against Jev through identical task files; results and what each run changed are in [FINDINGS §12–17](FINDINGS.md), including the lev-vs-Jev calibration comparison on all 13 subsets.
 - **Still open:** whether Mode A and Mode B agree where both are valid (Q2).
 
 ## 6. How the harness validates this
 
-`levbench` is instrumentation for this build, not a side project:
+`gevbench` is instrumentation for this build, not a side project:
 
-- Every design above serves `/v1/systemone`, so `levbench eval --base-url …` measures our model against Jev on identical questions with no code change.
-- `levbench eval` reports ECE, Brier, log loss and selective accuracy — the exact axis §3.1 identifies as the one that matters and that most clones failed.
-- `levbench sweep` verifies that reading the state amortises across the questions in one call, rather than assuming it.
-- `levbench confidence` settles which statistic our confidence should be, and whether it matches Jev's.
+- Every design above serves `/v1/systemone`, so `gevbench eval --base-url …` measures our model against Jev on identical questions with no code change.
+- `gevbench eval` reports ECE, Brier, log loss and selective accuracy — the exact axis §3.1 identifies as the one that matters and that most clones failed.
+- `gevbench sweep` verifies that reading the state amortises across the questions in one call, rather than assuming it.
+- `gevbench confidence` settles which statistic our confidence should be, and whether it matches Jev's.
 
 **The target to beat is not Jev's accuracy — it is the open clones' calibration.** They sit ~1 point behind Jev on accuracy (FINDINGS §9) and 1.6–2.2× worse on ECE. Closing the ECE gap with a fitted temperature, on a backbone we can run, is the achievable win.

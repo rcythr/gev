@@ -22,7 +22,7 @@ Jev's weights, training data and RLCD details are not public. Attempting to repr
 
 Our server speaks TypeSafe's exact request/response schema.
 
-**Why it matters more than it looks:** it makes the benchmark honest. `levbench` measures us and Jev through *the same code path*, with one changed flag. Any divergence in our favour would otherwise be unfalsifiable. It also lets anyone swap us in behind an existing `typesafe-sdk` client with a `base_url` change.
+**Why it matters more than it looks:** it makes the benchmark honest. `gevbench` measures us and Jev through *the same code path*, with one changed flag. Any divergence in our favour would otherwise be unfalsifiable. It also lets anyone swap us in behind an existing `typesafe-sdk` client with a `base_url` change.
 
 **One deliberate divergence:** our `NoulAnswer` adds `probabilities` and `confidence`. Jev's Noul is a bare float, which makes it the one question type you cannot calibrate from a response. The `noul` field is unchanged, so existing clients are unaffected. See ADR-007.
 
@@ -133,7 +133,7 @@ Two readings settle the project's direction:
 
 ### First measured head-to-head
 
-Jev `jev-1.13.0` against lev on `Qwen3.5-4B-Base` (untuned, Mode A, no calibration), same 24 items, same questions, `levbench eval`:
+Jev `jev-1.13.0` against lev on `Qwen3.5-4B-Base` (untuned, Mode A, no calibration), same 24 items, same questions, `gevbench eval`:
 
 | question | type | Jev acc | lev acc | Jev ECE | lev ECE |
 | --- | --- | --- | --- | --- | --- |
@@ -223,7 +223,7 @@ The block list covers all **13** subsets in the snapshot's `published_jev`, not 
 
 **Accepted.**
 
-`packages/levbench` (measurement) and `packages/lev` (the model) are separate distributions. The benchmark predates the model, is useful on its own against Jev and any compatible server, and **must not depend on our model** — a measuring instrument that imports the thing it measures is not an instrument.
+`packages/gevbench` (measurement) and `packages/gev` (the model) are separate distributions. The benchmark predates the model, is useful on its own against Jev and any compatible server, and **must not depend on our model** — a measuring instrument that imports the thing it measures is not an instrument.
 
 The lev **core** (schema, prompt, router, calibration, contamination) imports without torch, so it is fully testable on a laptop; everything needing a GPU sits behind the `[train]` extra.
 
@@ -289,11 +289,11 @@ Two coverage checks, because one is not enough. Every label *observed* must appe
 
 At n=24 the 95% interval on an accuracy estimate is about ±16 points. A training run that moved accuracy by 5 points is indistinguishable from one that moved it by nothing, so the hand-labelled support set cannot answer the only question training raises.
 
-It stays, as a smoke fixture: does the server answer, are the types right, does a distribution come back. The real eval is exported from the mixture's held-out test split — 2,760 items across nine sources, ±4 points per source — and `levbench eval --tasks` reads it.
+It stays, as a smoke fixture: does the server answer, are the types right, does a distribution come back. The real eval is exported from the mixture's held-out test split — 2,760 items across nine sources, ±4 points per source — and `gevbench eval --tasks` reads it.
 
 One file per source, because each source carries exactly one question. A single combined file would make the harness ask every question of every item, i.e. ask "how positive is this review?" of a banking ticket, and score the answer.
 
-The exporter lives in `lev`, not in `levbench`. levbench must not import the thing it measures (ADR-010), so the handoff is a JSON file and the writer sits on the model side of the fence.
+The exporter lives in `lev`, not in `gevbench`. gevbench must not import the thing it measures (ADR-010), so the handoff is a JSON file and the writer sits on the model side of the fence.
 
 ---
 
@@ -319,7 +319,7 @@ The 4B budget therefore read **16.0 hours** when it is closer to **1.7**. That e
 
 Three things changed as a result:
 
-- The default is `128`, with the measurement and its provenance in the docstring, and `lev plan --data <dir>` re-measures against a real mixture rather than trusting it.
+- The default is `128`, with the measurement and its provenance in the docstring, and `gev plan --data <dir>` re-measures against a real mixture rather than trusting it.
 - `tokens_per_step` was `max_seq_len × batch`, which bills the truncation cap rather than the work. The collator pads to the longest row in the batch, so at a 4,096 cap over 121-token data that over-counted by ~16x. It is now `avg_tokens_per_example × batch`, and `steps_per_epoch` counts **examples**, because an epoch is a pass over the data and how many optimiser steps that takes is a function of the batch, not of a token budget.
 - `per_device_batch` went 8 → 32. At a 121-token mean, a batch of 8 makes 75,000 optimiser steps and the run is bound by step overhead long before it is bound by FLOPs. `max_seq_len` dropped 4,096 → 2,048, which still clears the longest prompt seen with room to spare.
 
@@ -422,7 +422,7 @@ Two things were caught on the way that are bugs regardless of the above: the con
 
 - **`LABEL_OPTION_CAP = 26`**, applied by `TrainConfig` and `EngineConfig` alike. The cap draws the Mode A / Mode B line, not the tokenizer. Serving and training must agree or the model is asked at serve time to do what it never trained for.
 - **Two-order averaging** for Choice and binary Noul under the state-first layout: two suffix rows per question in the same batched forward, probabilities averaged in canonical order. reflex's correction, for reflex's measured reason. Not for Score or the rating scale: their order is the meaning, training never reorders them, and reversing Score measured -2.4 points on helpsteer2.
-- **Binary Noul** (`A: yes / B: no`) as the readout when no adapter is loaded. The 0-8 scale is the trained target and the only calibratable form, but a stock checkpoint pins it (ADR-007). `LEV_SERVE_MODEL=Qwen/Qwen3.5-4B modal serve` serves the instruct checkpoint frozen this way -- the zero-shot baseline every trained run must now beat.
+- **Binary Noul** (`A: yes / B: no`) as the readout when no adapter is loaded. The 0-8 scale is the trained target and the only calibratable form, but a stock checkpoint pins it (ADR-007). `GEV_SERVE_MODEL=Qwen/Qwen3.5-4B modal serve` serves the instruct checkpoint frozen this way -- the zero-shot baseline every trained run must now beat.
 - **Guard:** bare aliases match as segment sets; hwu64 is blocked under `massive-en-US` for its schema.
 - **Eval export** skips sources whose question varies per row rather than writing them under the first row's option set.
 
@@ -455,9 +455,9 @@ What a checkpoint now carries beside the weights: optimiser moments, scheduler p
 
 **Accepted.**
 
-**Releases.** Weights leave the training tree as a single directory: adapter, Mode B head, tokenizer, `calibration.json`, `lev_release.json`, model card. The manifest names the base model, the step and preset, and the serving policy the weights were trained under (option cap, Noul readout). A LoRA adapter is meaningless without its base, the head without its adapter, the temperatures without their readout, and the cap without the training that assumed it; shipping them apart is how a "model" on the Hub stops matching the numbers in the paper. `lev serve` reads the manifest, so a release serves from disk or from a Hub id with no other argument, and `/health` says what loaded. The optimiser state stays behind: it is for resuming, not serving.
+**Releases.** Weights leave the training tree as a single directory: adapter, Mode B head, tokenizer, `calibration.json`, `gev_release.json`, model card. The manifest names the base model, the step and preset, and the serving policy the weights were trained under (option cap, Noul readout). A LoRA adapter is meaningless without its base, the head without its adapter, the temperatures without their readout, and the cap without the training that assumed it; shipping them apart is how a "model" on the Hub stops matching the numbers in the paper. `gev serve` reads the manifest, so a release serves from disk or from a Hub id with no other argument, and `/health` says what loaded. The optimiser state stays behind: it is for resuming, not serving.
 
-**The Snake demo lives in levbench, not lev.** It is a client of `/v1/systemone` and nothing else, so the same game runs against lev, Jev, or a frozen baseline through the client `levbench eval` uses, and its latency includes the network the benchmark's does. laya-mlx's rules, planner and prompt wording are kept verbatim (Apache-2.0) so runs are comparable to theirs, and its display, loop (rounds, keyboard, pacing) and recording format are laya's too, so a recording replays in either. Two additions: the planner knows the true answer to both Noul questions, so the demo scores them live — in the compact prompt the state text states the answers, which makes this the cheapest possible probe of the "ignores its question" failure that cost lev 52 points on aegis2 — and `--backend planner` plays from the planner alone, the reference row every model is measured against and a way to see the display with no server up.
+**The Snake demo lives in gevbench, not lev.** It is a client of `/v1/systemone` and nothing else, so the same game runs against lev, Jev, or a frozen baseline through the client `gevbench eval` uses, and its latency includes the network the benchmark's does. laya-mlx's rules, planner and prompt wording are kept verbatim (Apache-2.0) so runs are comparable to theirs, and its display, loop (rounds, keyboard, pacing) and recording format are laya's too, so a recording replays in either. Two additions: the planner knows the true answer to both Noul questions, so the demo scores them live — in the compact prompt the state text states the answers, which makes this the cheapest possible probe of the "ignores its question" failure that cost lev 52 points on aegis2 — and `--backend planner` plays from the planner alone, the reference row every model is measured against and a way to see the display with no server up.
 
 **Deploy, don't serve, for anything you point a run at.** Every ephemeral app of `modal/app.py` — `modal serve` and every `modal run` — registers the same `lev-serve-dev` web label; a run steals it from a live dev server and the URL 404s when the run exits. Measured the hard way: an export run took the URL out from under a benchmark. `make deploy` owns a stable label.
 
@@ -482,7 +482,7 @@ Both are flat in the number of questions, which says the forward is bound by ker
 
 With `causal_conv1d` present (the image now builds it against `torch 2.14.0+cu130`): fork 140-156 ms, single 65-75 ms -- about 10% each. That the kernel bought so little is the diagnosis confirmed from a second angle: the time is in launching ~200 kernels twice, not in any one of them. What removes launches is CUDA-graph replay, so the engine gains `EngineConfig.compile` (`torch.compile(mode="reduce-overhead", dynamic=True)`) with inputs padded to shape buckets -- width to 32 tokens, rows to a power of two -- so the set of recorded graphs stays small, and a `warmup()` the server runs at startup so no request pays a capture. Padding changes no real row's logits: right padding is masked and rows are independent. The GPU forward is taken under a lock, because graph replay is not thread-safe and the server now accepts concurrent requests; parsing, tokenising and the network overlap around it.
 
-**Compile: measured, rejected.** On the same container, eager single-forward ran 86–94 ms and the compiled path 103–137 ms, after a 104 s warmup; dynamo hit its recompile limit (8) on the hybrid's linear-attention layers, so much of the forward stayed eager with extra guard overhead, and the Mode B shape then failed with a CUDA-graphs output-buffer overwrite when hidden states from one replay were read after the next. The flag stays (`LEV_SERVE_COMPILE=1`) so the measurement can be repeated on a future transformers/FLA release, and defaults off. Getting decider's 8 ms would mean a static-shape engine built for this model, not `torch.compile` over the stock one.
+**Compile: measured, rejected.** On the same container, eager single-forward ran 86–94 ms and the compiled path 103–137 ms, after a 104 s warmup; dynamo hit its recompile limit (8) on the hybrid's linear-attention layers, so much of the forward stayed eager with extra guard overhead, and the Mode B shape then failed with a CUDA-graphs output-buffer overwrite when hidden states from one replay were read after the next. The flag stays (`GEV_SERVE_COMPILE=1`) so the measurement can be repeated on a future transformers/FLA release, and defaults off. Getting decider's 8 ms would mean a static-shape engine built for this model, not `torch.compile` over the stock one.
 
 Also decided here, from the same session's measurements (FINDINGS.md §13): the image builds `causal_conv1d` from a CUDA devel base, since no wheel exists for `torch 2.14.0+cu130` and every log said the reference path was in use; and the serving path was verified correct end to end -- in-distribution accuracy over HTTP matches the collator-path `evaluate` on every source -- so no inference-side error is hiding behind the S1Bench gap.
 
@@ -517,7 +517,7 @@ Measured on the retrained instruct LoRA, same deployment, same 350 items, only t
     cap 76  → Mode A, 60 codes massive-en-US 0.746   (two-order averaged)
 ```
 
-The head is excellent on the taxonomies it trained on (clinc_oos 0.976, banking77 0.922) and weak on one it has not seen; the backbone's zero-shot label-token reading survives the LoRA well enough to be worth 51 points on an unseen one. So serving now routes Mode A whenever the tokenizer expresses the codes (`EngineConfig.max_label_options = None`; 68 for this tokenizer -- the 69th code, `BQ`, is two tokens; this ADR first said 76, which was wrong), and Mode B above that. Training kept `LABEL_OPTION_CAP = 26` at the time this was written; ADR-026 moves training to the same tokenizer-limit routing and feeds the head from the large sources' full option sets instead. `LEV_SERVE_MAX_LABEL_OPTIONS` reproduces any other policy; `/health` reports the one in effect.
+The head is excellent on the taxonomies it trained on (clinc_oos 0.976, banking77 0.922) and weak on one it has not seen; the backbone's zero-shot label-token reading survives the LoRA well enough to be worth 51 points on an unseen one. So serving now routes Mode A whenever the tokenizer expresses the codes (`EngineConfig.max_label_options = None`; 68 for this tokenizer -- the 69th code, `BQ`, is two tokens; this ADR first said 76, which was wrong), and Mode B above that. Training kept `LABEL_OPTION_CAP = 26` at the time this was written; ADR-026 moves training to the same tokenizer-limit routing and feeds the head from the large sources' full option sets instead. `GEV_SERVE_MAX_LABEL_OPTIONS` reproduces any other policy; `/health` reports the one in effect.
 
 Two costs, stated. The LoRA gave back ~8 points against the frozen backbone in this regime (0.746 vs 0.83) -- Mode A was trained on at most 14 options, so the regime is under-trained rather than untrained, and option subsampling into the 15-68 range for the Mode B sources would close it. And calibration there is unfitted: `choice:A`'s temperature comes from ≤26-option questions, and at 60 options the model is under-confident (ECE 0.20, accuracy 0.953 on the 60% of items it puts above 0.5). A temperature bucket keyed on option count needs held-out rows in that range, which the mixture does not yet have.
 
@@ -591,7 +591,7 @@ Serving now skips by default; training does not, so Mode B keeps its data. Mode 
 
 1. **Last-token projection.** The engine runs the decoder alone and applies `lm_head` only at each row's last real token, giving `(rows, vocab)` logits; the Mode B hidden state comes from the same gather instead of `output_hidden_states`' 33 layers. Same request: +0.06 GB. Against the old engine on a random Qwen3.5 with both layer kinds, max |Δp| is 1.7e-8 across Mode A and Mode B in both prefix modes; on the released weights (bf16, MPS) it is exactly 0 on nine S1Bench requests. `hidden_states[-1]` equals the decoder's `last_hidden_state` exactly, so the trained Mode B head sees the same vectors.
 2. **Cross-request batching (`lev.batcher`).** One worker thread owns the GPU. A request is validated and tokenised (`DecisionEngine.prepare`), then queued. Each forward takes every queued request that fits `max_batch_tokens` (rows × widest row) and runs them as one batch (`DecisionEngine.answer`). There is no timer: batches grow only while a forward is already running, so an idle server adds no wait. Rows are independent, so a batched request has the same inputs as a solo one. This is what vLLM's continuous batching reduces to when there is no decode loop.
-3. **Admission control.** A request arriving with `max_pending` (64) already in flight gets 503 with `Retry-After` immediately. In flight means queued or computing: a request whose client left keeps its slot until the worker finishes or skips it, since abandoned work still occupies the GPU. A request whose client disconnects, or that has waited past `timeout` (30 s, then 504), is dropped before the GPU, including one held back for the next batch. The worker survives any error in a batch; if its thread exits, waiting requests fail and new ones get 503, and `/health` reports `worker stopped`. `/health` is async and reports `in_flight`. On Modal, `LEV_SERVE_CONCURRENCY` sets both Modal's per-container input cap and `max_pending`, so the two limits agree.
+3. **Admission control.** A request arriving with `max_pending` (64) already in flight gets 503 with `Retry-After` immediately. In flight means queued or computing: a request whose client left keeps its slot until the worker finishes or skips it, since abandoned work still occupies the GPU. A request whose client disconnects, or that has waited past `timeout` (30 s, then 504), is dropped before the GPU, including one held back for the next batch. The worker survives any error in a batch; if its thread exits, waiting requests fail and new ones get 503, and `/health` reports `worker stopped`. `/health` is async and reports `in_flight`. On Modal, `GEV_SERVE_CONCURRENCY` sets both Modal's per-container input cap and `max_pending`, so the two limits agree.
 
 **Measured, CPU stand-in** (tiny random Qwen3.5 plus a fixed 50 ms per forward to imitate the launch-bound GPU of FINDINGS §13; not a GPU number):
 
@@ -602,7 +602,7 @@ Serving now skips by default; training does not, so Mode B keeps its data. Mode 
                  max_pending=4, 20 clients: 16 x 503 within 23 ms; clients gone at 0.3 s -> 2 forwards for 20 requests
 ```
 
-**Trade-off, accepted knowingly.** A request's batch, and so its padding and kernel shapes, now depends on what else arrives with it. Measured on the released weights (MPS, nine S1Bench requests, each solo vs all nine in one batch): the old and new engines agree exactly solo; batched vs solo moves |Δp| by a median 0.005 and at most **0.07** (squad2) in bf16, and by at most 2e-5 in fp32. So the shift is bf16 rounding of differently shaped matmuls, not a padding error. It is the same effect that companion questions in one request already had (ADR-019), but it now depends on traffic. CUDA numbers will differ from MPS ones. `LEV_SERVE_CONCURRENCY` rises from 4 to 32 so a Modal container sees enough requests to batch; past that, Modal scales out as before. Under `compile`, batched row counts are not covered by the warmup shapes and capture graphs on first use.
+**Trade-off, accepted knowingly.** A request's batch, and so its padding and kernel shapes, now depends on what else arrives with it. Measured on the released weights (MPS, nine S1Bench requests, each solo vs all nine in one batch): the old and new engines agree exactly solo; batched vs solo moves |Δp| by a median 0.005 and at most **0.07** (squad2) in bf16, and by at most 2e-5 in fp32. So the shift is bf16 rounding of differently shaped matmuls, not a padding error. It is the same effect that companion questions in one request already had (ADR-019), but it now depends on traffic. CUDA numbers will differ from MPS ones. `GEV_SERVE_CONCURRENCY` rises from 4 to 32 so a Modal container sees enough requests to batch; past that, Modal scales out as before. Under `compile`, batched row counts are not covered by the warmup shapes and capture graphs on first use.
 
 ---
 
@@ -610,7 +610,7 @@ Serving now skips by default; training does not, so Mode B keeps its data. Mode 
 
 **Accepted; untrained.**
 
-**Decision.** The backbone is `google/gemma-4-E4B-it`, fine-tuned with bf16 LoRA r32 and no quantization. `e4b-instruct` keeps the recipe ADR-020 and ADR-027 settled on: instruct weights, lr 5e-5, the backbone's own chat format. It is budgeted for a DGX Spark, whose 128 GB of unified memory holds the full ~8B-parameter checkpoint with the H100 batch of 32; the same preset runs unchanged on a rented H100 (`lev plan --gpu h100`). A 12 GB card was considered and dropped: E4B's bf16 weights alone are ~15 GB, and fitting them needs a 4-bit base. Every number in FINDINGS.md was measured on Qwen3.5 and does not carry over.
+**Decision.** The backbone is `google/gemma-4-E4B-it`, fine-tuned with bf16 LoRA r32 and no quantization. `e4b-instruct` keeps the recipe ADR-020 and ADR-027 settled on: instruct weights, lr 5e-5, the backbone's own chat format. It is budgeted for a DGX Spark, whose 128 GB of unified memory holds the full ~8B-parameter checkpoint with the H100 batch of 32; the same preset runs unchanged on a rented H100 (`gev plan --gpu h100`). A 12 GB card was considered and dropped: E4B's bf16 weights alone are ~15 GB, and fitting them needs a 4-bit base. Every number in FINDINGS.md was measured on Qwen3.5 and does not carry over.
 
 **What Gemma needed that Qwen did not.**
 
@@ -621,7 +621,7 @@ Serving now skips by default; training does not, so Mode B keeps its data. Mode 
 
 **Found on the way.** The loop sized a run in optimiser steps but counted micro-batches, so any `grad_accum > 1` run stopped after 1/`grad_accum` of its data. No preset accumulates, but a smaller batch on a busy GPU would; it now counts micro-batches.
 
-**Unmeasured.** The Spark hour estimate scales the H100's measured throughput by peak bf16 rate. `avg_tokens_per_example` is still the Qwen measurement: run `lev plan --data` once the mixture is built.
+**Unmeasured.** The Spark hour estimate scales the H100's measured throughput by peak bf16 rate. `avg_tokens_per_example` is still the Qwen measurement: run `gev plan --data` once the mixture is built.
 
 ---
 
@@ -633,7 +633,7 @@ Serving now skips by default; training does not, so Mode B keeps its data. Mode 
 | **Q2** | Do Mode A and Mode B agree where both are valid? | Explicit eval ([ADR-005](#adr-005--dual-mode-readout-the-differentiator)). A correctness gate, not a nice-to-have |
 | **Q3** | Can a *state* cache persist across requests? | decider persists a **schema** cache; persisting state is unclaimed and is the genuinely novel direction |
 | **Q4** | Does Mode B cost accuracy under the ceiling? | Ablation: Mode B forced on small option sets vs Mode A |
-| ~~Q5~~ | ~~How long does a 4B run actually take?~~ | **7.8 h** for the released 4b-instruct run: 18,750 steps at ~1.5 s/step, read from its checkpoint times, excluding one restart. The plain-prompt runs took 4h50 and 5h53. `lev plan` is calibrated on the 7.8 h (the 23 h once read was a cumulative-rate artefact, ADR-017) |
+| ~~Q5~~ | ~~How long does a 4B run actually take?~~ | **7.8 h** for the released 4b-instruct run: 18,750 steps at ~1.5 s/step, read from its checkpoint times, excluding one restart. The plain-prompt runs took 4h50 and 5h53. `gev plan` is calibrated on the 7.8 h (the 23 h once read was a cumulative-rate artefact, ADR-017) |
 | ~~Q6~~ | ~~Does an instruct checkpoint fix zero-shot Noul?~~ | **Closed by ADR-018, reopened by ADR-020.** Training fixed it in-distribution (0.975/0.915) and broke it out of distribution (aegis2 0.312, below every constant predictor). The instruct checkpoint became the starting point (ADR-020), and the released model reads Noul from the trained rating scale |
 | **Q7** | Do the public training corpora transfer to support-triage states? | Train, then eval on both the generated set *and* the 24-item fixture. Agreement between them is the signal; the fixture alone cannot resolve it |
 | ~~Q9~~ | ~~How does lev compare to Jev on S1Bench?~~ | **Answered on identical task files**, harness validated against Jev's own numbers. On the earlier six-subset definitions: 0.489 macro in the first run (FINDINGS.md §12, ADR-020), 0.725 in the third, against Jev's 0.754 (§16). On all 13 subsets as S1Bench pins them: 0.689 against Jev's 0.761, and 0.719 on the board's six, level with reflex-4b (§17) |

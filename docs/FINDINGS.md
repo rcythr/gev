@@ -77,7 +77,7 @@ The plan's §15 treats calibration and confidence as one training objective. The
 
 LitJev, reproducing the schema, uses normalized Gini concentration `(K·Σp² − 1)/(K − 1)` while disclaiming parity with Jev — and it is **wrong, but only in the inner statistic**. The chance-correcting wrapper `(K·x − 1)/(K − 1)` is right; `x` is the maximum, not the sum of squares. Gini came second-*worst* of six candidates (mean 0.0430).
 
-The identification took two corrections to the tool. Pooling all sizes hid the answer, and a flat 5e-3 match threshold rejected it: the normalisation amplifies Jev's 2dp rounding by `K/(K−1)`, putting the true formula at 0.0100 — twice a threshold set for statistics that pass rounding through unchanged. `levbench confidence` now derives its tolerance from the detected quantisation and each formula's measured sensitivity to it.
+The identification took two corrections to the tool. Pooling all sizes hid the answer, and a flat 5e-3 match threshold rejected it: the normalisation amplifies Jev's 2dp rounding by `K/(K−1)`, putting the true formula at 0.0100 — twice a threshold set for statistics that pass rounding through unchanged. `gevbench confidence` now derives its tolerance from the detected quantisation and each formula's measured sensitivity to it.
 
 **And confidence is not an accuracy estimate.** Bespoke Nimble states it plainly for its own model: *"a confidence of 0.9 does not mean that the answer is right 90% of the time."* Whether Jev's is better behaved is exactly what ECE and selective accuracy in this harness are for.
 
@@ -216,10 +216,10 @@ Existence, language, licence and last-push confirmed via the GitHub API on 2026-
 | [`bespokelabsai/nimble`](https://github.com/bespokelabsai/nimble) | Qwen3.5-9B + LoRA | No (library) | The only one with published eval numbers |
 | [`bnsd55/jevmlx`](https://github.com/bnsd55/jevmlx) | Qwen2.5 MLX 4-bit | **No** — Pydantic API | MIT. The only one that runs on Apple Silicon |
 
-**The practical consequence for this repo:** three of these speak the identical wire schema, and `TypeSafeClient` already accepts `base_url`. So `levbench` benchmarks them with no code change:
+**The practical consequence for this repo:** three of these speak the identical wire schema, and `TypeSafeClient` already accepts `base_url`. So `gevbench` benchmarks them with no code change:
 
 ```bash
-levbench eval --backend lev --base-url http://127.0.0.1:8000  # any local clone
+gevbench eval --backend gev --base-url http://127.0.0.1:8000  # any local clone
 ```
 
 `jevmlx` does **not** serve the endpoint — it exposes a Pydantic schema API — so it would need a small adapter. It is nonetheless the only option that runs locally on an Apple Silicon machine; the others want a datacentre GPU.
@@ -285,7 +285,7 @@ Only these 20 targets finished the suite. Thirteen more were stopped after `vita
 
 **1. Open reproductions are ~1 point behind on accuracy.** `simplejev-qwen38-27b` scores 0.7582 against Jev's 0.7751 — a 1.0pp paired gap. Combined with §8, the accuracy moat is thin. If accuracy were the whole story, a self-hosted 27B would be competitive today.
 
-**2. Calibration is where Jev actually separates — and it is the thing this harness measures.** At comparable accuracy Jev's ECE of 0.0764 is 1.6–2.2× better than the open clones near it (0.1214, 0.1365, 0.1661). This is direct evidence for the RLCD "calibrated decisions" claim, and it is precisely the axis §3 and `levbench eval` target. Caveat against over-reading: Jev is best-calibrated *at its accuracy level*, not absolutely — `open-jev-deberta` (0.0668) and `jeff-gpu-full` (0.0738) beat it on ECE while scoring 22–25pp lower on accuracy. Low ECE is easy when you are uncertain and correct about being uncertain.
+**2. Calibration is where Jev actually separates — and it is the thing this harness measures.** At comparable accuracy Jev's ECE of 0.0764 is 1.6–2.2× better than the open clones near it (0.1214, 0.1365, 0.1661). This is direct evidence for the RLCD "calibrated decisions" claim, and it is precisely the axis §3 and `gevbench eval` target. Caveat against over-reading: Jev is best-calibrated *at its accuracy level*, not absolutely — `open-jev-deberta` (0.0668) and `jeff-gpu-full` (0.0738) beat it on ECE while scoring 22–25pp lower on accuracy. Low ECE is easy when you are uncertain and correct about being uncertain.
 
 **3. The speed claim does not survive this comparison.** Jev runs at **2.39 dec/s** (median 0.419s/decision — consistent with TypeSafe's own "70ms–500ms" figure). Against purpose-built open decision models it is mid-pack at best: `open-jev-deberta` 37.4, `decider-2b` 27.2, `reflex-08b` 24.4, `laya-gpu` 17.9 dec/s. The "193.6× faster" headline [VENDOR] is measured against *frontier LLMs*, not against the category Jev now competes in. Restated honestly: **Jev is two orders of magnitude faster than an LLM doing the same job, and roughly an order of magnitude slower than a small purpose-built local model — while being better calibrated than either.**
 
@@ -345,7 +345,7 @@ Official Claude Code skill: `claude plugin marketplace add typesafe-ai/skills` t
 
 > §§12–16 use this repo's own loaders for the six subsets, not the items S1Bench scores: massive-en-US there is 60 intents on the validation split, where S1Bench asks 18 scenarios on test, and all six use this repo's question wording, not S1Bench's. Their numbers compare runs with each other, not with the board. §17 re-runs on S1Bench's pinned items.
 
-Run 2026-09-22. 1,999 items across the six S1Bench subsets that actually executed in `s1-fast`, exported by `lev s1bench export` and scored through one `levbench eval --tasks` against both backends, so the prompts are identical and a gap is attributable to the model rather than to the harness.
+Run 2026-09-22. 1,999 items across the six S1Bench subsets that actually executed in `s1-fast`, exported by `gev s1bench export` and scored through one `gevbench eval --tasks` against both backends, so the prompts are identical and a gap is attributable to the model rather than to the harness.
 
 **The harness reproduces Jev.** Jev on our task files against its own recorded accuracy, with the 95% band for a difference of two independent samples:
 
@@ -590,7 +590,7 @@ ADR-026 mixture (29 sources: FEVER, word-swapped paraphrase negatives, parade, y
 
 Past the frozen backbone and past reflex (0.719) for the first time; above Jev on aegis2 and helpsteer2, better calibrated than Jev on massive (the option-count bands: `choice:A:large` T=1.66 fitted on 1,515 rows). Held-out weighted 0.807, ECE 0.180 → 0.061, on a harder 29-source split.
 
-> **The S1Bench ECE figures in this section are not a valid lev-vs-Jev comparison.** They were measured before levbench binned ECE on each answer's top probability: lev's rows binned on its Gini `confidence`, Jev's on its chance-corrected maximum, two different statistics. The held-out ECE (0.061) comes from `lev.train.evaluate` and is unaffected. The S1Bench comparison has to be re-run to be quoted.
+> **The S1Bench ECE figures in this section are not a valid lev-vs-Jev comparison.** They were measured before gevbench binned ECE on each answer's top probability: lev's rows binned on its Gini `confidence`, Jev's on its chance-corrected maximum, two different statistics. The held-out ECE (0.061) comes from `lev.train.evaluate` and is unaffected. The S1Bench comparison has to be re-run to be quoted.
 
 What worked, by target: word-swapped negatives took paws from 0.612 to 0.716 (the shortcut is mostly unlearned, not gone -- still 4 under frozen, and confidently wrong at ECE 0.235); large lettered sets took massive to within 2.3 of Jev; the yes/no recasts moved boolq +1.7.
 
@@ -608,7 +608,7 @@ The logs for this run are in `docs/charts/logs/pre-nimble/`.
 
 ## 17. All 13 S1Bench subsets, on the pinned items
 
-Run 2026-09-24. S1Bench's items come from Bespoke Labs' Nimble public-benchmark manifests (commit `62076b4`): per subset, the upstream dataset, the exact ids, the label counts, a SHA-256 of the records, and the one question every record asks. `lev s1bench export` rebuilds each subset from its Hugging Face source, keeps exactly the pinned ids and refuses the export if an id is missing or the label counts differ. The rebuilt records match the manifest SHA-256 on 12 of 13 subsets; multinli differs only in reference metadata the model never sees (Nimble reads annotator votes from the original NYU zip). Record counts match the board on 12 of 13; helpsteer2 has 249 against the board's 250. 3,880 items. The vendored definitions are in `packages/lev/src/lev/data/s1bench_subsets/`.
+Run 2026-09-24. S1Bench's items come from Bespoke Labs' Nimble public-benchmark manifests (commit `62076b4`): per subset, the upstream dataset, the exact ids, the label counts, a SHA-256 of the records, and the one question every record asks. `gev s1bench export` rebuilds each subset from its Hugging Face source, keeps exactly the pinned ids and refuses the export if an id is missing or the label counts differ. The rebuilt records match the manifest SHA-256 on 12 of 13 subsets; multinli differs only in reference metadata the model never sees (Nimble reads annotator votes from the original NYU zip). Record counts match the board on 12 of 13; helpsteer2 has 249 against the board's 250. 3,880 items. The vendored definitions are in `packages/gev/src/gev/data/s1bench_subsets/`.
 
 Both backends were run sequentially from the same laptop, through the same task files: Jev on the hosted API (served `jev-1.13.0`), lev on the deployed `4b-instruct/step-18750` (chat prompts, skipped label codes, transfer-selected calibration). ECE is binned on each answer's top probability for both, so this is the first valid lev-vs-Jev calibration comparison on S1Bench.
 

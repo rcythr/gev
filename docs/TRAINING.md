@@ -24,7 +24,7 @@ The evidence for that ordering: on S1Bench, an _untuned_ 27B with a label-token 
 
 ```bash
 uv sync --extra serve
-uv run lev serve --model google/gemma-4-E4B-it --prompt-style gemma --port 8000
+uv run gev serve --model google/gemma-4-E4B-it --prompt-style gemma --port 8000
 ```
 
 > **Use the instruct checkpoint.** Measured on `Qwen3.5-4B-Base`: Choice reaches 0.958 accuracy, but Noul collapses to 0.292 — exactly the positive base rate, because a base model answers "yes" to every 9-point rating prompt ([ADR-007](DECISIONS.md#adr-007--noul-from-nine-rating-tokens)). The instruct checkpoint is also the better starting point for the fine-tune (ADR-020).
@@ -32,8 +32,8 @@ uv run lev serve --model google/gemma-4-E4B-it --prompt-style gemma --port 8000
 Measure it with the same harness that measures Jev:
 
 ```bash
-uv run levbench eval  --backend lev
-uv run levbench sweep --backend lev
+uv run gevbench eval  --backend gev
+uv run gevbench sweep --backend gev
 ```
 
 `sweep` is the one to watch: it compares the cost and latency of one N-question call with N single-question calls on the same state, so it measures rather than assumes that reading the state amortises. If it does, batched cost stays roughly flat as N grows while split cost grows linearly.
@@ -58,14 +58,14 @@ A bucket with fewer than 50 samples is left unfitted at `T=1.0` (the identity) r
 
 ```bash
 make data                  # downloads every source, writes three splits
-make eval-set              # export the held-out split for levbench
+make eval-set              # export the held-out split for gevbench
 ```
 
 or with the knobs visible:
 
 ```bash
-uv run lev data build --out data/mixture --limit-per-source 20000 --n-examples 200000
-uv run lev data eval  --data data/mixture --out data/eval
+uv run gev data build --out data/mixture --limit-per-source 20000 --n-examples 200000
+uv run gev data eval  --data data/mixture --out data/eval
 ```
 
 **The contamination guard runs before anything loads**, and it covers all **thirteen** S1Bench evaluation subsets, not just the six that executed in the `s1-fast` run ([ADR-009](DECISIONS.md#adr-009--all-thirteen-evaluation-subsets-are-banned-from-training)):
@@ -77,7 +77,7 @@ unrun    massive-de-DE  squad2  multinli  civil_comments
 ```
 
 ```bash
-uv run lev check-data sources.txt
+uv run gev check-data sources.txt
 ```
 
 It resolves aliases, so `tals/vitaminc`, `paws-x`, `google/boolq`, `nvidia/HelpSteer2` and `rajpurkar/squad_v2` are all caught. Contamination would _improve_ the headline number while invalidating it, which is why this raises rather than warns.
@@ -129,7 +129,7 @@ Dropped, with reasons: `CogComp/trec`, `takala/financial_phrasebank`, `allenai/c
 | ------------- | ----- | ------------------------------------------------- |
 | `train`       | 80%   | the fine-tune                                     |
 | `calibration` | 10%   | fitting the temperature — never train, never test |
-| `test`        | 10%   | the held-out eval, exported for levbench          |
+| `test`        | 10%   | the held-out eval, exported for gevbench          |
 
 Assignment is a blake2b hash of a per-row key (source, position within the source, text), not an RNG draw, so it reproduces on any machine and re-run for the same row order; a re-ordered corpus re-splits. Python's `hash()` is salted per process.
 
@@ -174,11 +174,11 @@ H100         ~88 TFLOP/s sustained, measured (not the 990 peak)
 measured     18,750 steps @ 32 examples/step, ~1.5 s/step on the released run
 ```
 
-The 128 tokens is **measured** (a 121-token mean over 1,500 rendered prompts from the real mixture under the Qwen3.5 tokenizer, rounded up). Per source it runs 38 (clinc_oos) to 305 (imdb); p95 is 390 and the longest seen is 1,104. A guessed 1,200 once put the estimate at 16 hours (ADR-016). Run `lev plan --data data/mixture` to re-measure after changing the mixture.
+The 128 tokens is **measured** (a 121-token mean over 1,500 rendered prompts from the real mixture under the Qwen3.5 tokenizer, rounded up). Per source it runs 38 (clinc_oos) to 305 (imdb); p95 is 390 and the longest seen is 1,104. A guessed 1,200 once put the estimate at 16 hours (ADR-016). Run `gev plan --data data/mixture` to re-measure after changing the mixture.
 
 At a 128-token mean the batch size matters more than the sequence cap: a batch of 8 would make 75,000 optimiser steps and the run would be bound by step overhead long before it was bound by FLOPs. Hence `per_device_batch = 32`.
 
-The throughput is measured rather than assumed because the FLOP count is not the work done: the model computes on the padded rectangle (length bucketing takes padding from 4.43x to 1.43x), each step carries fixed overhead, and chat prompts add tokens the 128-token mean does not count. At the 400 TFLOP/s once assumed, this budget read 1.7 hours; the released run took 7.8. The plain-prompt 4B runs took 4h50 and 5h53, so `lev plan` reads high for them. [ADR-017.](DECISIONS.md#adr-017--batches-are-length-bucketed-and-the-budget-was-wrong-again)
+The throughput is measured rather than assumed because the FLOP count is not the work done: the model computes on the padded rectangle (length bucketing takes padding from 4.43x to 1.43x), each step carries fixed overhead, and chat prompts add tokens the 128-token mean does not count. At the 400 TFLOP/s once assumed, this budget read 1.7 hours; the released run took 7.8. The plain-prompt 4B runs took 4h50 and 5h53, so `gev plan` reads high for them. [ADR-017.](DECISIONS.md#adr-017--batches-are-length-bucketed-and-the-budget-was-wrong-again)
 
 `make plan` recomputes this from the config, so changing any knob shows the new cost _before_ you rent the GPU.
 
@@ -229,7 +229,7 @@ The backbone is Gemma 4 E4B ([ADR-031](DECISIONS.md#adr-031--gemma-4-e4b-replace
 | `e4b`              | Gemma 4 E4B (base), plain prompts     | LoRA r32              | 14.9 GB     | 8.8        | ~87         |
 | **`e4b-instruct`** | **Gemma 4 E4B-it**, **gemma prompts** | **LoRA r32, lr 5e-5** | **14.9 GB** | **8.8**    | **~87**     |
 
-Hours are `lev plan --gpu h100|spark` estimates. The H100 figure is calibrated on the Qwen3.5 4b-instruct run (7.8 h measured); the Spark figure scales it by peak bf16 throughput and is unmeasured. The 128-token average they assume was measured under the Qwen tokenizer: run `uv run lev plan --data data/mixture` once the mixture is built. `e4b-instruct` keeps the released recipe (ADR-020, ADR-027): instruct weights, lr 5e-5, the backbone's own chat format, here the `gemma` style. The style is recorded in the release manifest and applied when serving. Everything trains in bf16; nothing is quantized.
+Hours are `gev plan --gpu h100|spark` estimates. The H100 figure is calibrated on the Qwen3.5 4b-instruct run (7.8 h measured); the Spark figure scales it by peak bf16 throughput and is unmeasured. The 128-token average they assume was measured under the Qwen tokenizer: run `uv run gev plan --data data/mixture` once the mixture is built. `e4b-instruct` keeps the released recipe (ADR-020, ADR-027): instruct weights, lr 5e-5, the backbone's own chat format, here the `gemma` style. The style is recorded in the release manifest and applied when serving. Everything trains in bf16; nothing is quantized.
 
 ### Training locally on a DGX Spark, or on a rented H100
 
@@ -237,9 +237,9 @@ Hours are `lev plan --gpu h100|spark` estimates. The H100 figure is calibrated o
 make setup-train                                 # torch, transformers, peft
 make data                                        # -> data/mixture
 make smoke-local STEPS=20                        # Gemma 4 E2B, a few steps: proves the path
-make plan PRESET=e4b-instruct                    # Spark budget; add --gpu h100 via `uv run lev plan`
+make plan PRESET=e4b-instruct                    # Spark budget; add --gpu h100 via `uv run gev plan`
 make train-local PRESET=e4b-instruct             # resumes the newest checkpoint; FRESH=1 starts over
-make calibrate-local PRESET=e4b-instruct         # -> checkpoints/lev-e4b-instruct/calibration.json
+make calibrate-local PRESET=e4b-instruct         # -> checkpoints/gev-e4b-instruct/calibration.json
 ```
 
 The same commands run on any single H100 or A100 80GB box; `make train PRESET=e4b-instruct` runs it on Modal instead. Gemma 4 is gated on the Hub: accept its licence and `huggingface-cli login` first. Training stops before loading weights if the `gemma` framing differs from the tokenizer's chat template, and prints both; update `CHAT_FRAMES` in `lev/prompt.py` to the template's. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: length-bucketed batches otherwise fragment the allocator.
@@ -248,20 +248,20 @@ The same commands run on any single H100 or A100 80GB box; `make train PRESET=e4
 
 [`notebooks/train_colab.ipynb`](../notebooks/train_colab.ipynb) runs the whole path on an H100, A100 or L4 runtime: clone, install, build the mixture once to Google Drive, smoke, train, calibrate, try, package. It sizes the micro-batch to the card (32, 16 x 2 or 8 x 4; the optimiser batch is 32 on all of them) and keeps checkpoints on Drive with `--keep-last 2`, about 1 GB each. After a disconnect, run every cell again: training resumes where it stopped. A free T4 will not do: 16 GB is about E4B's bf16 weights alone, and Turing has no native bf16.
 
-`lev train` and `lev plan` take the same overrides the notebook uses: `--gpu {h100,a100-80,a100-40,l4,spark}` for the budget, `--per-device-batch` and `--grad-accum` to fit memory, and `--keep-last N` (train only) to bound disk.
+`gev train` and `gev plan` take the same overrides the notebook uses: `--gpu {h100,a100-80,a100-40,l4,spark}` for the budget, `--per-device-batch` and `--grad-accum` to fit memory, and `--keep-last N` (train only) to bound disk.
 
 ## Step 4b — serve what you trained
 
 ```bash
-uv run lev serve --checkpoint checkpoints/lev-e4b-instruct --model google/gemma-4-E4B-it --prompt-style gemma
-uv run levbench eval --backend lev --tasks data/eval
+uv run gev serve --checkpoint checkpoints/gev-e4b-instruct --model google/gemma-4-E4B-it --prompt-style gemma
+uv run gevbench eval --backend gev --tasks data/eval
 ```
 
-Or in-process: `lev.load("checkpoints/lev-e4b-instruct", model_id="google/gemma-4-E4B-it", prompt_style="gemma")`.
+Or in-process: `gev.load("checkpoints/gev-e4b-instruct", model_id="google/gemma-4-E4B-it", prompt_style="gemma")`.
 
 `--checkpoint` takes the output directory and resolves the newest `step-N` inside it, a flat release directory, or a Hub id. It loads the base model, applies the LoRA adapter on top, picks up `mode_b_head.pt` if it is there, and uses the `calibration.json` beside the weights unless `--calibration` overrides it. `GET /health` reports which checkpoint was resolved, whether a Mode B head loaded, whether the profile is calibrated, the Noul readout, the option cap, and requests in flight against `max_pending` — check it before reading any number off an eval.
 
-A checkpoint directory is an _adapter_, not a model, so `--model` and `--prompt-style` name the base and format it was trained with — except for a packaged release, whose `lev_release.json` records both.
+A checkpoint directory is an _adapter_, not a model, so `--model` and `--prompt-style` name the base and format it was trained with — except for a packaged release, whose `gev_release.json` records both.
 
 ### Releasing the weights
 
@@ -271,11 +271,11 @@ make weights RELEASE=4b-instruct                # -> weights/4b-instruct locally
 make publish RELEASE=4b-instruct REPO=org/name  # -> huggingface.co/org/name (HF_TOKEN)
 ```
 
-`lev release build` copies adapter, head, tokenizer and calibration into one directory with a manifest and a model card; the optimiser state is left behind. `lev serve --checkpoint org/name` downloads and serves it.
+`gev release build` copies adapter, head, tokenizer and calibration into one directory with a manifest and a model card; the optimiser state is left behind. `gev serve --checkpoint org/name` downloads and serves it.
 
 ### On Modal: which checkpoint, and `serve` vs `deploy`
 
-`make deploy PRESET=4b-instruct` serves that preset's newest checkpoint; the preset travels to the container as `LEV_SERVE_PRESET`. `LEV_SERVE_MODEL=Qwen/Qwen3.5-4B make deploy` serves that model frozen — no adapter, binary Noul — the zero-shot baseline.
+`make deploy PRESET=4b-instruct` serves that preset's newest checkpoint; the preset travels to the container as `GEV_SERVE_PRESET`. `GEV_SERVE_MODEL=Qwen/Qwen3.5-4B make deploy` serves that model frozen — no adapter, binary Noul — the zero-shot baseline.
 
 `modal serve` is an ephemeral dev server. So is every `modal run` of this app file, and each one registers the `serve` web function under the same `-dev` label — so running an export or a diagnostic while the dev server is up steals its URL, and the URL returns 404 when the run exits. `make deploy` gives the server a stable URL that runs cannot take.
 

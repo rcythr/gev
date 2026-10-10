@@ -59,33 +59,33 @@ clean: ## Remove caches and build artefacts
 
 .PHONY: plan check-data data eval-set s1bench
 plan: ## Print the PRESET's training budget without spending it
-	uv run lev plan --preset $(PRESET)
+	uv run gev plan --preset $(PRESET)
 
 check-data: ## Contamination guard over a source list (SOURCES=path)
-	uv run lev check-data $(SOURCES)
+	uv run gev check-data $(SOURCES)
 
 data: ## Build the training mixture locally (LIMIT=rows per source)
-	uv run lev data build --out $(OUT) --limit-per-source $(LIMIT)
+	uv run gev data build --out $(OUT) --limit-per-source $(LIMIT)
 
-eval-set: ## Export the held-out split as levbench task files
-	uv run lev data eval --data $(OUT) --out $(EVAL)
+eval-set: ## Export the held-out split as gevbench task files
+	uv run gev data eval --data $(OUT) --out $(EVAL)
 
-s1bench: ## Export the S1Bench eval subsets as levbench task files
-	uv run lev s1bench export --out $(S1)
+s1bench: ## Export the S1Bench eval subsets as gevbench task files
+	uv run gev s1bench export --out $(S1)
 
 ##@ Train
 
 .PHONY: smoke-local train-local calibrate-local smoke train calibrate
 smoke-local: ## Train Gemma 4 E2B for a few steps — proves the path without Modal
-	uv run lev data build --out /tmp/lev-mix --limit-per-source 2000 --n-examples 4000
-	uv run lev train --preset smoke --data /tmp/lev-mix \
-		--output-dir /tmp/lev-smoke --max-steps $(STEPS)
+	uv run gev data build --out /tmp/gev-mix --limit-per-source 2000 --n-examples 4000
+	uv run gev train --preset smoke --data /tmp/gev-mix \
+		--output-dir /tmp/gev-smoke --max-steps $(STEPS)
 
 train-local: ## Train PRESET on this machine's GPU; resumes the newest checkpoint (FRESH=1, RESUME=path)
-	uv run lev train --preset $(PRESET) --data $(OUT) $(if $(FRESH),--fresh,) $(if $(RESUME),--resume $(RESUME),)
+	uv run gev train --preset $(PRESET) --data $(OUT) $(if $(FRESH),--fresh,) $(if $(RESUME),--resume $(RESUME),)
 
 calibrate-local: ## Fit per-bucket temperatures for PRESET's newest local checkpoint
-	uv run lev calibrate --preset $(PRESET) --data $(OUT)
+	uv run gev calibrate --preset $(PRESET) --data $(OUT)
 
 smoke: ## Modal: exercise the whole training path on Gemma 4 E2B
 	modal run modal/app.py::smoke
@@ -100,32 +100,32 @@ calibrate: ## Modal: fit per-bucket temperatures after training
 
 .PHONY: serve deploy release weights publish
 serve: ## Modal: dev server on an H100 (ephemeral; any `modal run` on this app steals its URL)
-	LEV_SERVE_PRESET=$(PRESET) modal serve modal/app.py
+	GEV_SERVE_PRESET=$(PRESET) modal serve modal/app.py
 
 deploy: ## Modal: deploy /v1/systemone with a stable URL (PRESET selects the checkpoint)
-	LEV_SERVE_PRESET=$(PRESET) modal deploy modal/app.py
+	GEV_SERVE_PRESET=$(PRESET) modal deploy modal/app.py
 
 release: ## Modal: package the newest PRESET checkpoint into a release dir on the volume
 	modal run modal/app.py::export_checkpoint --preset $(PRESET) $(if $(NAME),--name $(NAME),)
 
 weights: ## Pull a packaged release to weights/RELEASE (RELEASE=name, default PRESET)
 	mkdir -p weights
-	modal volume get --force lev-checkpoints releases/$(RELEASE) weights/
+	modal volume get --force gev-checkpoints releases/$(RELEASE) weights/
 
 publish: ## Upload weights/RELEASE to the Hub (REPO=org/name; needs HF_TOKEN)
-	uv run lev release publish weights/$(RELEASE) --repo $(REPO)
+	uv run gev release publish weights/$(RELEASE) --repo $(REPO)
 
 ##@ Benchmark
 
 .PHONY: bench bench-local sweep snake
 bench: s1bench ## Benchmark Jev on the S1Bench subsets (needs TYPESAFE_API_KEY)
-	uv run levbench eval --backend jev --tasks $(S1)
+	uv run gevbench eval --backend jev --tasks $(S1)
 
 bench-local: s1bench ## Benchmark a /v1/systemone server on the S1Bench subsets (URL=server)
-	uv run levbench eval --backend lev --base-url $(URL) --tasks $(S1)
+	uv run gevbench eval --backend gev --base-url $(URL) --tasks $(S1)
 
 sweep: ## Measure shared-state batching economics
-	uv run levbench sweep --backend jev
+	uv run gevbench sweep --backend jev
 
 snake: ## The decision model plays Snake over /v1/systemone (URL=server; --record in artifacts/)
-	uv run levbench snake --backend lev --base-url $(URL) --record artifacts/snake/run.jsonl
+	uv run gevbench snake --backend gev --base-url $(URL) --record artifacts/snake/run.jsonl

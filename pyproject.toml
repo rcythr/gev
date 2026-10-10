@@ -1,20 +1,20 @@
 [project]
-name = "lev-workspace"
+name = "gev-workspace"
 version = "0.1.1"
-description = "lev — umbrella workspace: the `lev` decision model and the `levbench` harness"
+description = "gev — umbrella workspace: the `gev` decision model and the `gevbench` harness"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "levbench",
-    "lev",
+    "gevbench",
+    "gev",
 ]
 
 [project.optional-dependencies]
-train = ["lev[train]"]
-serve = ["lev[serve]"]
-modal = ["lev[modal]"]
-demo = ["levbench[demo]"]
+train = ["gev[train]"]
+serve = ["gev[serve]"]
+modal = ["gev[modal]"]
+demo = ["gevbench[demo]"]
 
 [dependency-groups]
 dev = [
@@ -25,14 +25,14 @@ dev = [
 ]
 
 [tool.uv.sources]
-levbench = { workspace = true }
-lev = { workspace = true }
+gevbench = { workspace = true }
+gev = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/levbench/tests", "packages/lev/tests"]
+testpaths = ["packages/gevbench/tests", "packages/gev/tests"]
 addopts = "-q"
 
 [tool.ruff]

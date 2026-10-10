@@ -12,18 +12,18 @@ Both must be clean. Tests run without a GPU, network or API keys. A basic `uv sy
 
 | Work on | Start here | Focused tests |
 | --- | --- | --- |
-| Request schema, prompts or routing | `packages/lev/src/lev/{types,prompt,router,labels}.py` | `test_core.py` |
-| Inference and HTTP serving | `packages/lev/src/lev/{model,server,batcher}.py`, `readout/` | `test_core.py`, `test_cache_fork.py`, `test_engine_forward.py`, `test_batcher.py` |
-| Training data and contamination | `packages/lev/src/lev/data/` | `test_data_pipeline.py`, `test_contamination.py`, `test_eval_export.py`, `test_s1bench.py` |
-| Training and resume | `packages/lev/src/lev/train/{loop,collate,checkpoints,progress}.py` | `test_training_loop.py`, `test_collate.py`, `test_loss.py`, `test_progress.py` |
-| Calibration and evaluation | `packages/lev/src/lev/calibrate.py`, `train/{calibration_run,evaluate}.py` | `test_calibration.py`, `test_evaluate.py` |
-| CLI and release packaging | `packages/lev/src/lev/{cli,release}.py` | `test_cli.py`, `test_release.py`, `test_packaging.py` |
-| Benchmark harness and demo | `packages/levbench/src/levbench/` | `test_offline.py`, `test_snake.py` |
+| Request schema, prompts or routing | `packages/gev/src/gev/{types,prompt,router,labels}.py` | `test_core.py` |
+| Inference and HTTP serving | `packages/gev/src/gev/{model,server,batcher}.py`, `readout/` | `test_core.py`, `test_cache_fork.py`, `test_engine_forward.py`, `test_batcher.py` |
+| Training data and contamination | `packages/gev/src/gev/data/` | `test_data_pipeline.py`, `test_contamination.py`, `test_eval_export.py`, `test_s1bench.py` |
+| Training and resume | `packages/gev/src/gev/train/{loop,collate,checkpoints,progress}.py` | `test_training_loop.py`, `test_collate.py`, `test_loss.py`, `test_progress.py` |
+| Calibration and evaluation | `packages/gev/src/gev/calibrate.py`, `train/{calibration_run,evaluate}.py` | `test_calibration.py`, `test_evaluate.py` |
+| CLI and release packaging | `packages/gev/src/gev/{cli,release}.py` | `test_cli.py`, `test_release.py`, `test_packaging.py` |
+| Benchmark harness and demo | `packages/gevbench/src/gevbench/` | `test_offline.py`, `test_snake.py` |
 
 Tests live under each package's `tests/` directory. For example:
 
 ```bash
-uv run pytest packages/lev/tests/test_core.py
+uv run pytest packages/gev/tests/test_core.py
 ```
 
 `modal/app.py` connects these components to remote volumes and GPUs. Import model dependencies inside the functions that need them so the core and CLI help remain usable without the training extras. Copy a `PRESETS` entry with `dataclasses.replace` before applying per-run overrides.
@@ -53,7 +53,7 @@ Keep benchmark histories and design comparisons in `docs/FINDINGS.md` and `docs/
 
 **The contamination guard is not negotiable.** All 13 S1Bench subsets are banned from training ([ADR-009](docs/DECISIONS.md#adr-009--all-thirteen-evaluation-subsets-are-banned-from-training)). Contamination makes the headline number *better* while invalidating it, which is why the guard raises instead of warning. Do not add a bypass flag.
 
-**`levbench` must not import `lev`.** A measuring instrument that depends on the thing it measures is not an instrument.
+**`gevbench` must not import `gev`.** A measuring instrument that depends on the thing it measures is not an instrument.
 
 ## Tests
 
