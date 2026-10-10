@@ -14,9 +14,20 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter
 
+from .backbone import Quantize, final_logit_softcap
 from .calibrate import CalibrationProfile
 from .labels import noul_probability
-from .prompt import Layout, Rendered, Style, build, candidate_texts, label_prefix, schema_block
+from .prompt import (
+    Layout,
+    PromptStyle,
+    Rendered,
+    Style,
+    build,
+    candidate_texts,
+    chat_template_mismatch,
+    label_prefix,
+    schema_block,
+)
 from .router import BINARY_NOUL, Mode, Route, route_all
 from .train.checkpoints import MODE_B_HEAD
 from .types import (
@@ -36,12 +47,12 @@ _QUESTIONS = TypeAdapter(dict[str, Question])
 
 @dataclass
 class EngineConfig:
-    model_id: str = "Qwen/Qwen3.5-4B-Base"
+    model_id: str = "google/gemma-4-E4B-it"
     # None uses Mode A up to the tokenizer's limit (ADR-025).
     max_label_options: int | None = None
     layout: Layout = Layout.STATE_FIRST
     # Must match training; recorded in the release manifest.
-    prompt_style: Literal["plain", "chat"] = "plain"
+    prompt_style: PromptStyle = "plain"
     # Frozen checkpoints use binary Noul; trained ones use the 0-8 scale (ADR-007).
     noul_readout: Literal["rating", "binary"] = "rating"
     # A second option order reduces letter-position bias; costs one extra batch row.
@@ -157,6 +168,7 @@ class DecisionEngine:
         base = model.get_base_model() if hasattr(model, "get_base_model") else model
         self._decoder = base.get_decoder() if model is not None else None
         self._lm_head = base.get_output_embeddings() if model is not None else None
+        self._softcap = final_logit_softcap(base) if model is not None else None
         self._eager_decoder = self._decoder
         if self.config.compile:
             import torch
@@ -408,7 +420,10 @@ class DecisionEngine:
 
         rows = torch.arange(states.size(0), device=states.device)
         last = states[rows, torch.tensor(last_positions, device=states.device)]  # (N, H)
-        return self._lm_head(last), (last if want_hidden else None)
+        logits = self._lm_head(last)
+        if self._softcap:
+            logits = torch.tanh(logits / self._softcap) * self._softcap
+        return logits, (last if want_hidden else None)
 
     def _scores(self, logits, hidden, route: Route, question: Question) -> list[float]:
         """Scores for one variant row: `logits` is `(V,)`, `hidden` `(H,)` or None."""
@@ -512,14 +527,16 @@ class DecisionEngine:
 def load(
     checkpoint: str | Path | None = None,
     *,
-    model_id: str = "Qwen/Qwen3.5-4B-Base",
+    model_id: str = "google/gemma-4-E4B-it",
     cache_dir: str | None = None,
     calibration: str | Path | None = None,
     noul_readout: Literal["rating", "binary"] | None = None,
-    prompt_style: Literal["plain", "chat"] | None = None,
+    prompt_style: PromptStyle | None = None,
     compile: bool = False,
     max_label_options: int | None = None,
     skip_multi_token_codes: bool = True,
+    quantize: Quantize = None,
+    offload_per_layer_embeddings: bool = False,
 ) -> DecisionEngine:
     """Load a checkpoint -- a release directory, a training output or a Hub id --
     into a ready `DecisionEngine`. With no checkpoint, serves `model_id` frozen.
@@ -530,11 +547,13 @@ def load(
     A release's `lev_release.json` names the base model and prompt style its
     weights were trained under and overrides `model_id` and `prompt_style`. The
     Mode B head and `calibration.json` beside the adapter are picked up; a
-    missing calibration is warned about, not hidden.
+    missing calibration is warned about, not hidden. `quantize="4bit"` and
+    `offload_per_layer_embeddings` fit Gemma E4B on a 12 GB GPU.
     """
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
 
+    from .backbone import load_backbone
     from .train.checkpoints import CALIBRATION, resolve_checkpoint
 
     # A checkpoint holds a LoRA adapter, not a full model: load the base from
@@ -556,15 +575,18 @@ def load(
     tok_source = resolved if resolved and (resolved / "tokenizer.json").is_file() else model_id
     tokenizer = AutoTokenizer.from_pretrained(str(tok_source), cache_dir=cache_dir)
 
+    style = Style(prompt_style or "plain")
+    if mismatch := chat_template_mismatch(tokenizer, style):
+        print(f"WARNING: {mismatch}")
+
     # The adapter wrapper and backbone expose different static types.
-    model: Any = AutoModelForCausalLM.from_pretrained(
+    model: Any = load_backbone(
         model_id,
         dtype=torch.bfloat16,
-        device_map="auto" if torch.cuda.device_count() > 1 else None,
         cache_dir=cache_dir,
+        quantize=quantize,
+        offload_per_layer_embeddings=offload_per_layer_embeddings,
     )
-    if torch.cuda.is_available() and torch.cuda.device_count() == 1:
-        model = model.cuda()
 
     head = None
     if resolved:
@@ -592,7 +614,7 @@ def load(
         # content (ADR-007), so untrained serving reads Noul as two options.
         noul_readout=noul_readout or ("rating" if resolved else "binary"),
         compile=compile,
-        prompt_style=prompt_style or "plain",
+        prompt_style=style.value,
         max_label_options=max_label_options,
         skip_multi_token_codes=skip_multi_token_codes,
     )

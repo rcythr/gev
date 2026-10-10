@@ -8,6 +8,8 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+PROMPT_STYLES = ["plain", "chat", "gemma"]
+
 
 def _measure_tokens(config, data_dir: str, sample: int = 1500) -> dict:
     """Length distribution of real rendered prompts; the budget rests on it (ADR-016)."""
@@ -170,6 +172,17 @@ def cmd_train(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_calibrate(args: argparse.Namespace) -> None:
+    from .train.calibration_run import fit_profile
+    from .train.config import PRESETS
+
+    config = replace(PRESETS[args.preset])
+    if args.output_dir:
+        config.output_dir = args.output_dir
+    result = fit_profile(config.output_dir, args.data, config=config, method=args.method)
+    print(f"{len(result['temperatures'])} temperatures -> {result['profile']}")
+
+
 def cmd_release_build(args: argparse.Namespace) -> None:
     from .release import build_release
     from .train.config import PRESETS
@@ -216,6 +229,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
             prompt_style=args.prompt_style,
             max_pending=args.max_pending,
             max_batch_tokens=args.max_batch_tokens,
+            quantize=args.quantize,
+            offload_per_layer_embeddings=args.offload_per_layer_embeddings,
         ),
         host=args.host,
         port=args.port,
@@ -232,12 +247,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="measure token lengths from a built mixture instead of trusting the default",
     )
-    plan_parser.add_argument("--preset", default="4b", choices=_preset_names())
+    plan_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
     plan_parser.set_defaults(func=cmd_plan)
 
     route_parser = sub.add_parser("route", help="show the readout mode per question")
     route_parser.add_argument("request", help="path to a /v1/systemone request JSON")
-    route_parser.add_argument("--model", default="Qwen/Qwen3.5-4B-Base")
+    route_parser.add_argument("--model", default="google/gemma-4-E4B-it")
     # Defaults mirror `EngineConfig`, so the preview matches what a server does.
     route_parser.add_argument(
         "--max-label-options",
@@ -245,7 +260,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="force Mode B above this many options (default: the tokenizer limit, as served)",
     )
-    route_parser.add_argument("--prompt-style", choices=["plain", "chat"], default="plain")
+    route_parser.add_argument("--prompt-style", choices=PROMPT_STYLES, default="plain")
     route_parser.add_argument(
         "--no-skip-codes", action="store_true", help="stop at the first two-token label code"
     )
@@ -266,7 +281,7 @@ def main(argv: list[str] | None = None) -> None:
             "untrained base model."
         ),
     )
-    serve_parser.add_argument("--model", default="Qwen/Qwen3.5-4B-Base")
+    serve_parser.add_argument("--model", default="google/gemma-4-E4B-it")
     serve_parser.add_argument("--model-cache", default=None)
     serve_parser.add_argument("--calibration", default=None)
     serve_parser.add_argument(
@@ -280,9 +295,20 @@ def main(argv: list[str] | None = None) -> None:
     )
     serve_parser.add_argument(
         "--prompt-style",
-        choices=["plain", "chat"],
+        choices=PROMPT_STYLES,
         default=None,
         help="default: the release manifest's, else plain",
+    )
+    serve_parser.add_argument(
+        "--quantize",
+        choices=["4bit"],
+        default=None,
+        help="load the base in NF4 via bitsandbytes; for 12 GB GPUs",
+    )
+    serve_parser.add_argument(
+        "--offload-per-layer-embeddings",
+        action="store_true",
+        help="keep Gemma's per-layer embedding table in CPU memory",
     )
     serve_parser.add_argument(
         "--max-pending",
@@ -348,7 +374,7 @@ def main(argv: list[str] | None = None) -> None:
         "--checkpoint", required=True, help="a step-N dir or its parent"
     )
     build_release_parser.add_argument("--out", required=True)
-    build_release_parser.add_argument("--preset", default="4b", choices=_preset_names())
+    build_release_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
     build_release_parser.add_argument("--calibration", default=None)
     build_release_parser.add_argument("--name", default=None)
     build_release_parser.set_defaults(func=cmd_release_build)
@@ -359,7 +385,7 @@ def main(argv: list[str] | None = None) -> None:
     publish_parser.set_defaults(func=cmd_release_publish)
 
     train_parser = sub.add_parser("train", help="run the LoRA fine-tune")
-    train_parser.add_argument("--preset", default="4b", choices=_preset_names())
+    train_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
     train_parser.add_argument("--data", default="data/mixture")
     train_parser.add_argument("--output-dir", default=None)
     train_parser.add_argument("--model-cache", default=None)
@@ -373,6 +399,17 @@ def main(argv: list[str] | None = None) -> None:
         "--fresh", action="store_true", help="ignore existing checkpoints and start over"
     )
     train_parser.set_defaults(func=cmd_train)
+
+    calibrate_parser = sub.add_parser(
+        "calibrate", help="fit per-bucket temperatures on the calibration split"
+    )
+    calibrate_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
+    calibrate_parser.add_argument("--data", default="data/mixture")
+    calibrate_parser.add_argument(
+        "--output-dir", default=None, help="the training output; default: the preset's"
+    )
+    calibrate_parser.add_argument("--method", default="transfer", choices=["transfer", "rows"])
+    calibrate_parser.set_defaults(func=cmd_calibrate)
 
     args = parser.parse_args(argv)
     args.func(args)

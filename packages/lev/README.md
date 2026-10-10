@@ -1,6 +1,6 @@
 # lev
 
-An open System One decision model. Give it a state and typed questions (yes/no, choice, score), and it answers all of them in one forward pass with calibrated probabilities over exactly the options you supplied. A LoRA adapter on Qwen3.5-4B, served over TypeSafe's `/v1/systemone` protocol.
+An open System One decision model. Give it a state and typed questions (yes/no, choice, score), and it answers all of them in one forward pass with calibrated probabilities over exactly the options you supplied. A LoRA adapter on Gemma 4 E4B (the published weights are on Qwen3.5-4B), served over TypeSafe's `/v1/systemone` protocol.
 
 ```bash
 pip install "lev[serve] @ git+https://github.com/Abhinavexists/lev#subdirectory=packages/lev"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 from .labels import NOUL_RATING_TOKENS
 from .types import Choice, JSONContent, Noul, Question, Score
@@ -21,11 +22,16 @@ class Style(StrEnum):
     """Prompt format recorded with the weights and shared by training and serving.
 
     Plain uses Context/Question/Options/Answer sections. Chat uses ChatML with
-    a system prompt and an empty think block (ADR-027).
+    a system prompt and an empty think block (ADR-027), for Qwen. Gemma frames
+    the same turns in Gemma 4's turn markers (ADR-031).
     """
 
     PLAIN = "plain"
     CHAT = "chat"
+    GEMMA = "gemma"
+
+
+PromptStyle = Literal["plain", "chat", "gemma"]
 
 
 def label_prefix(style: Style) -> str:
@@ -41,6 +47,16 @@ CHAT_SYSTEM_PROMPT = (
     "You answer with the single option label only."
 )
 CHAT_TAIL = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+# No newline before the turn end: Gemma's template trims message content.
+GEMMA_TAIL = "<turn|>\n<|turn>model\n"
+# Text before the user turn's content, and after it up to the scored position.
+CHAT_FRAMES: dict[Style, tuple[str, str]] = {
+    Style.CHAT: (
+        f"<|im_start|>system\n{CHAT_SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n",
+        f"\n{CHAT_TAIL}",
+    ),
+    Style.GEMMA: (f"<|turn>system\n{CHAT_SYSTEM_PROMPT}<turn|>\n<|turn>user\n", GEMMA_TAIL),
+}
 CHAT_ASK = {
     "choice": "Respond with only the letter of the best option.",
     "score": "Respond with only the letter of the level that best matches.",
@@ -91,7 +107,7 @@ def render_question(
     orders averaged cancel first-letter bias. A Noul with two codes is the binary
     readout for an untrained checkpoint, which cannot rate 0-8 (ADR-007).
     """
-    if style is Style.CHAT:
+    if style is not Style.PLAIN:
         return _render_question_chat(name, question, codes, order)
     lines = [f"Question: {question.instructions or name}"]
 
@@ -206,8 +222,8 @@ def build(
     style: Style = Style.PLAIN,
 ) -> Rendered:
     """Render one question against one state, cut for the chosen layout."""
-    if style is Style.CHAT:
-        return _build_chat(state, name, question, codes, layout, cached_schema, order)
+    if style is not Style.PLAIN:
+        return _build_chat(state, name, question, codes, layout, cached_schema, order, style)
     state_block = f"Context:\n{render_state(state)}\n\n"
     question_block = render_question(name, question, codes, order)
 
@@ -220,17 +236,51 @@ def build(
     return Rendered(prefix=prefix, suffix=f"{state_block}{ANSWER_CUE}")
 
 
-def _build_chat(state, name, question, codes, layout, cached_schema, order) -> Rendered:
-    """ChatML: system turn, then a user turn holding evidence and criterion in
-    either order, then the opened assistant turn the label token is read from.
-    The scored position is the final `\\n\\n` after the empty think block."""
-    head = f"<|im_start|>system\n{CHAT_SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n"
+def _build_chat(state, name, question, codes, layout, cached_schema, order, style) -> Rendered:
+    """System turn, then a user turn holding evidence and criterion in either
+    order, then the opened assistant turn the label token is read from. The
+    scored position is the last token of the style's tail."""
+    head, tail = CHAT_FRAMES[style]
     evidence = f"# Evidence\n{render_state(state)}\n\n"
-    criterion = render_question(name, question, codes, order, Style.CHAT)
+    criterion = render_question(name, question, codes, order, style)
     if layout is Layout.STATE_FIRST:
-        return Rendered(prefix=head + evidence, suffix=f"{criterion}\n{CHAT_TAIL}")
+        return Rendered(prefix=head + evidence, suffix=f"{criterion}{tail}")
     catalogue = cached_schema if cached_schema is not None else criterion
-    return Rendered(prefix=f"{head}{catalogue}\n\n", suffix=f"{evidence.rstrip()}\n{CHAT_TAIL}")
+    return Rendered(prefix=f"{head}{catalogue}\n\n", suffix=f"{evidence.rstrip()}{tail}")
+
+
+def chat_template_mismatch(tokenizer, style: Style) -> str | None:
+    """None if the style frames a system and user turn exactly as the tokenizer's
+    own chat template does (thinking off), else a message showing both.
+
+    Plain prompts, and tokenizers without a template, have nothing to compare.
+    """
+    if style is Style.PLAIN or not getattr(tokenizer, "chat_template", None):
+        return None
+    head, tail = CHAT_FRAMES[style]
+    ours = f"{head}EVIDENCE{tail}"
+    # Whitespace leading the tail is the end of the user content, as the template sees it.
+    content_end = tail[: len(tail) - len(tail.lstrip())]
+    theirs = tokenizer.apply_chat_template(
+        [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": f"EVIDENCE{content_end}"},
+        ],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+    # The template writes BOS as text; `encode` adds it as a special token instead.
+    bos = getattr(tokenizer, "bos_token", None)
+    if bos and theirs.startswith(bos):
+        theirs = theirs[len(bos) :]
+    if theirs == ours:
+        return None
+    return (
+        f"prompt style {style.value!r} does not match the tokenizer's chat template.\n"
+        f"  ours:      {ours!r}\n  template:  {theirs!r}\n"
+        f"Update CHAT_FRAMES in lev/prompt.py to the template's framing."
+    )
 
 
 def schema_block(

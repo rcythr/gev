@@ -29,7 +29,10 @@ def build_model(config: TrainConfig, model_cache: str | None = None):
     """Load the tokenizer and backbone, wrapped in LoRA when `config.use_lora`."""
     import torch
     from peft import LoraConfig, get_peft_model
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
+
+    from ..backbone import load_backbone, lora_target_pattern
+    from ..prompt import chat_template_mismatch
 
     tokenizer = AutoTokenizer.from_pretrained(config.model_id, cache_dir=model_cache)
     if tokenizer.pad_token_id is None:
@@ -37,6 +40,9 @@ def build_model(config: TrainConfig, model_cache: str | None = None):
         # so the pad token only has to exist.
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
+    # Fails before the model loads: hours of training on a misframed prompt are wasted.
+    if mismatch := chat_template_mismatch(tokenizer, Style(config.prompt_style)):
+        raise ValueError(mismatch)
 
     # bfloat16 on CPU is glacial, and `make smoke-local` runs on a laptop.
     dtype = getattr(torch, config.dtype)
@@ -45,16 +51,13 @@ def build_model(config: TrainConfig, model_cache: str | None = None):
         dtype = torch.float32
 
     # The adapter wrapper and backbone expose different static types.
-    model: Any = AutoModelForCausalLM.from_pretrained(
+    model: Any = load_backbone(
         config.model_id,
         dtype=dtype,
-        # Multi-GPU only: on an Apple machine accelerate dispatches to MPS and
-        # the process dies with SIGSEGV part-way through loading.
-        device_map="auto" if torch.cuda.device_count() > 1 else None,
         cache_dir=model_cache,
+        quantize=config.quantize,
+        offload_per_layer_embeddings=config.offload_per_layer_embeddings,
     )
-    if torch.cuda.is_available() and torch.cuda.device_count() == 1:
-        model = model.cuda()
 
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()
@@ -69,7 +72,7 @@ def build_model(config: TrainConfig, model_cache: str | None = None):
                 r=config.lora_rank,
                 lora_alpha=config.lora_alpha,
                 lora_dropout=config.lora_dropout,
-                target_modules=list(config.lora_targets),
+                target_modules=lora_target_pattern(config.lora_targets),
                 task_type="CAUSAL_LM",
             ),
         )
@@ -137,6 +140,7 @@ def candidate_logits(model, batch, head=None):
             input_ids=batch.input_ids,
             attention_mask=batch.attention_mask,
             logits_to_keep=keep,
+            use_cache=False,
         )
         rows = torch.arange(batch.size, device=out.logits.device)
         vocab = out.logits[rows, column.to(out.logits.device)]  # (B, V)
@@ -148,6 +152,7 @@ def candidate_logits(model, batch, head=None):
             input_ids=batch.input_ids,
             attention_mask=batch.attention_mask,
             output_hidden_states=True,
+            use_cache=False,
         )
         hidden = out.hidden_states[-1]
         rows = torch.arange(batch.size, device=hidden.device)
@@ -157,6 +162,7 @@ def candidate_logits(model, batch, head=None):
             input_ids=batch.candidate_input_ids,
             attention_mask=batch.candidate_attention_mask,
             output_hidden_states=True,
+            use_cache=False,
         ).hidden_states[-1]
         pool_rows = torch.arange(pooled.size(0), device=pooled.device)
         candidate_repr = pooled[pool_rows, batch.candidate_last_positions]  # (C, H)
@@ -181,7 +187,8 @@ def build_head(config: TrainConfig, model=None):
 
     hidden = config.hidden_size
     if model is not None:
-        hidden = getattr(model.config, "hidden_size", hidden)
+        # A multimodal config keeps the decoder's width in its text config.
+        hidden = getattr(model.config.get_text_config(), "hidden_size", hidden)
     head = CandidatePathReadout(hidden_size=hidden, proj_dim=config.mode_b_proj_dim)
     if model is not None:
         head = head.to(device=device_of(model), dtype=torch.float32)
@@ -289,7 +296,8 @@ def run_training(
     optimiser = AdamW(params, lr=config.learning_rate, weight_decay=config.weight_decay)
 
     train = data["train"]
-    steps_per_epoch = max(1, len(train) // config.examples_per_step)
+    # `step` counts micro-batches; `grad_accum` of them make one optimiser step.
+    steps_per_epoch = max(1, len(train) // config.per_device_batch)
     total_steps = max_steps or steps_per_epoch * config.epochs
     # Sized in optimiser steps: sized in micro-steps, the cosine would finish
     # `grad_accum` times early and the tail would train at a learning rate of 0.

@@ -12,6 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 train = ["lev[train]"]
+qlora = ["lev[qlora]"]
 serve = ["lev[serve]"]
 modal = ["lev[modal]"]
 demo = ["levbench[demo]"]

@@ -80,7 +80,7 @@ VOLUMES: dict[str | PurePosixPath, modal.Volume | modal.CloudBucketMount] = {
 
 # The preset `serve` exposes when `LEV_SERVE_PRESET` is unset. Not a function
 # argument: Modal requires `@modal.asgi_app` functions to take none.
-SERVE_PRESET = "4b"
+SERVE_PRESET = "e4b-instruct"
 
 
 def _hf_secrets() -> list:
@@ -110,11 +110,11 @@ SERVE_SCALEDOWN = int(os.environ.get("LEV_SERVE_SCALEDOWN", "300"))
 SERVE_MAX = int(os.environ["LEV_SERVE_MAX"]) if os.environ.get("LEV_SERVE_MAX") else None
 
 
-def _prompt_style(value: str | None) -> Literal["plain", "chat"] | None:
+def _prompt_style(value: str | None) -> Literal["plain", "chat", "gemma"] | None:
     if not value:
         return None
-    if value not in ("plain", "chat"):
-        raise ValueError(f"LEV_SERVE_PROMPT={value!r} is not 'plain' or 'chat'")
+    if value not in ("plain", "chat", "gemma"):
+        raise ValueError(f"LEV_SERVE_PROMPT={value!r} is not 'plain', 'chat' or 'gemma'")
     return value
 
 
@@ -140,7 +140,7 @@ SECRETS = _hf_secrets() + _serve_overrides()
 
 
 @app.function(volumes={MODELS_DIR: models}, secrets=SECRETS, timeout=60 * 60)
-def download(model_id: str = "Qwen/Qwen3.5-4B-Base") -> str:
+def download(model_id: str = "google/gemma-4-E4B-it") -> str:
     """Pre-fetch a checkpoint into the models Volume. Idempotent.
 
     `cache_dir`, not `local_dir`: `from_pretrained(..., cache_dir=)` expects the HF cache layout.
@@ -164,7 +164,7 @@ def download(model_id: str = "Qwen/Qwen3.5-4B-Base") -> str:
     timeout=24 * 60 * 60,  # the released run took 7.8 h; a truncated run costs everything
 )
 def train(
-    preset: str = "4b",
+    preset: str = "e4b-instruct",
     resume: str | None = None,
     dry_run: bool = False,
     max_steps: int | None = None,
@@ -223,7 +223,7 @@ def build_data(limit_per_source: int = 20_000, n_examples: int = 200_000) -> dic
 
 @app.function(gpu="H100", volumes=VOLUMES, secrets=SECRETS, timeout=2 * 60 * 60)
 def smoke(steps: int = 40) -> dict:
-    """Exercise every part of `train` but its duration, on the 0.8B preset. Run this first.
+    """Exercise every part of `train` but its duration, on the E2B preset. Run this first.
 
     Builds a small mixture if the data volume is empty.
     """
@@ -246,7 +246,9 @@ def smoke(steps: int = 40) -> dict:
 
 
 @app.function(gpu="H100", volumes=VOLUMES, secrets=SECRETS, timeout=60 * 60)
-def calibrate(preset: str = "4b", split: str = "calibration", method: str = "transfer") -> dict:
+def calibrate(
+    preset: str = "e4b-instruct", split: str = "calibration", method: str = "transfer"
+) -> dict:
     """Fit per-bucket temperatures on a split that is neither train nor test.
 
     Separate from `train` so re-fitting needs no fine-tune.
@@ -269,7 +271,7 @@ def calibrate(preset: str = "4b", split: str = "calibration", method: str = "tra
 
 @app.function(gpu="H100", volumes=VOLUMES, secrets=SECRETS, timeout=2 * 60 * 60)
 def evaluate(
-    preset: str = "4b",
+    preset: str = "e4b-instruct",
     split: str = "test",
     limit_per_source: int | None = None,
 ) -> dict:
@@ -368,7 +370,7 @@ def serve():
 
 
 @app.local_entrypoint()
-def main(preset: str = "4b", dry_run: bool = True):
+def main(preset: str = "e4b-instruct", dry_run: bool = True):
     """Default entrypoint: print the budget without spending it."""
     result = train.remote(preset=preset, dry_run=dry_run)
     print(result)
@@ -378,7 +380,7 @@ RELEASES_DIR = f"{CKPT_DIR}/releases"
 
 
 @app.function(volumes={CKPT_DIR: checkpoints}, secrets=SECRETS, timeout=30 * 60)
-def export_checkpoint(preset: str = "4b", name: str | None = None) -> dict:
+def export_checkpoint(preset: str = "e4b-instruct", name: str | None = None) -> dict:
     """Package the newest checkpoint of a preset into `/checkpoints/releases/<name>`.
 
     No GPU: it copies files (adapter, head, tokenizer, calibration, manifest)
@@ -405,7 +407,7 @@ def export_checkpoint(preset: str = "4b", name: str | None = None) -> dict:
 
 
 @app.function(gpu="H100", volumes=VOLUMES, secrets=SECRETS, timeout=30 * 60)
-def check_release(name: str = "4b") -> dict:
+def check_release(name: str = "e4b-instruct") -> dict:
     """Load a packaged release the way a user will -- `lev.load` on the flat
     directory, then the HTTP server over it -- and answer one request of every
     question type through each. Raises if the release loads without its
@@ -463,7 +465,7 @@ def check_release(name: str = "4b") -> dict:
 
 
 @app.function(gpu="H100", volumes=VOLUMES, secrets=SECRETS, timeout=30 * 60)
-def diagnose_candidates(model_id: str = "Qwen/Qwen3.5-4B-Base") -> dict:
+def diagnose_candidates(model_id: str = "google/gemma-4-E4B-it") -> dict:
     """Compare candidate representations alone, batched, reversed and left-padded.
 
     Tests whether Mode B's padded batch leaks across rows. Result: bit-identical (FINDINGS §12).
@@ -574,7 +576,7 @@ def _probabilities(answer: Answer) -> dict[Any, float]:
 
 
 @app.function(gpu="H100", volumes=VOLUMES, secrets=SECRETS, timeout=30 * 60)
-def profile_engine(preset: str = "4b", rounds: int = 20) -> dict:
+def profile_engine(preset: str = "e4b-instruct", rounds: int = 20) -> dict:
     """Time each engine stage of a `/v1/systemone` call in the container, CUDA-synchronised.
 
     Both prefix modes and the compiled path; medians over `rounds` after warmup. Excludes network.

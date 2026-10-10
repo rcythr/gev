@@ -223,32 +223,35 @@ The display shows the board, the four direction probabilities with the model's p
 
 ## Train it yourself
 
+This fork trains on **Gemma 4 E4B** (`google/gemma-4-E4B-it`) instead of Qwen3.5-4B, on a DGX Spark or a 12 GB RTX 3080 Ti ([ADR-031](docs/DECISIONS.md#adr-031--gemma-4-e4b-replaces-qwen35-4b-sized-for-a-dgx-spark-or-a-12-gb-card)). Every accuracy, calibration and speed figure above was measured on the Qwen3.5 release and has not been re-measured on Gemma.
+
 ```bash
 make setup     # uv sync, no torch, no GPU
 make test      # the full suite: no GPU, no network, no API keys
-make plan PRESET=4b-instruct
+make plan PRESET=e4b-instruct
 ```
 
 ```text
-model            Qwen/Qwen3.5-4B  (4.0B, bfloat16)
+model            google/gemma-4-E4B-it  (4.5B, bfloat16)
 adaptation       LoRA r32
-prompt           chat prompts, Mode A to the tokenizer limit
+prompt           gemma prompts, Mode A to the tokenizer limit
 data             200,000 examples x 128 tok x 3 epochs  = 0.08B tokens
 steps            18,750 (32 ex/step, ~4,096 tok/step)
-compute          2.46e+18 FLOPs
-H100 estimate    7.8 hours (0.3 days)
-memory           8.3 GB state, 71.7 GB headroom of 80 GB
+compute          2.76e+18 FLOPs
+time estimate    87.3 hours (3.6 days) on DGX Spark (GB10)
+memory           14.9 GB state, 104.1 GB headroom of 119 GB
 ```
 
-The 128-token figure is measured over 1,500 real rendered prompts, not assumed; `lev plan --data data/mixture` re-measures it against your mixture. Then:
+The 128-token figure was measured under the Qwen tokenizer; `lev plan --data data/mixture` re-measures it against your mixture and Gemma's. The Spark and 3080 Ti hours are scaled from the H100's, not measured. Then:
 
 ```bash
-make setup-train                 # torch, transformers, peft
-make data                        # 29 public sources -> train / calibration / test
-make smoke-local STEPS=20        # prove the path on 0.8B, on CPU, before spending a GPU
-make train PRESET=4b-instruct    # Modal, one H100
-make calibrate PRESET=4b-instruct
-scripts/publish_hf.sh            # package, load-check on an H100, publish to a private Hub repo
+make setup-train                                  # torch, transformers, peft (DGX Spark)
+make setup-qlora                                  # ...plus bitsandbytes (RTX 3080 Ti)
+make data                                         # 29 public sources -> train / calibration / test
+make smoke-local STEPS=20                         # prove the path on Gemma 4 E2B first
+make train-local PRESET=e4b-instruct              # DGX Spark: bf16 LoRA
+make train-local PRESET=e4b-instruct-12gb         # RTX 3080 Ti: QLoRA, per-layer embeddings on CPU
+make calibrate-local PRESET=e4b-instruct          # or the -12gb preset
 ```
 
 The data build refuses any source that resolves to one of the 13 S1Bench subsets. [SETUP.md](docs/SETUP.md) covers Modal, [TRAINING.md](docs/TRAINING.md) the pipeline, and [STATUS.md](docs/STATUS.md) what has been run.

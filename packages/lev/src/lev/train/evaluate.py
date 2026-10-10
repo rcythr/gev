@@ -115,7 +115,7 @@ def evaluate_split(
     from .config import PRESETS
     from .loop import build_head, build_model, candidate_logits, device_of, to_device
 
-    config = config or PRESETS["4b"]
+    config = config or PRESETS["e4b-instruct"]
     profile = profile or CalibrationProfile()
 
     model, tokenizer = build_model(config, None)

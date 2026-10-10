@@ -1,7 +1,7 @@
-# `make help` lists every target. Variables are overridable: `make train PRESET=9b`.
+# `make help` lists every target. Variables are overridable: `make train-local PRESET=e4b-instruct-12gb`.
 .DEFAULT_GOAL := help
 
-PRESET  ?= 4b-instruct
+PRESET  ?= e4b-instruct
 RELEASE ?= $(PRESET)
 NAME    ?=
 REPO    ?=
@@ -22,12 +22,15 @@ help: ## Show this help
 
 ##@ Setup
 
-.PHONY: setup setup-train setup-serve setup-modal
+.PHONY: setup setup-train setup-qlora setup-serve setup-modal
 setup: ## Install the workspace
 	uv sync
 
 setup-train: ## Install with the training extras (torch, transformers, peft)
 	uv sync --extra train
+
+setup-qlora: ## Training extras plus bitsandbytes, for the 12 GB preset
+	uv sync --extra qlora
 
 setup-serve: ## Install with the serving extras (adds fastapi, uvicorn)
 	uv sync --extra serve
@@ -58,7 +61,7 @@ clean: ## Remove caches and build artefacts
 ##@ Data
 
 .PHONY: plan check-data data eval-set s1bench
-plan: ## Print the H100 training budget without spending it
+plan: ## Print the PRESET's training budget without spending it
 	uv run lev plan --preset $(PRESET)
 
 check-data: ## Contamination guard over a source list (SOURCES=path)
@@ -75,13 +78,19 @@ s1bench: ## Export the S1Bench eval subsets as levbench task files
 
 ##@ Train
 
-.PHONY: smoke-local smoke train calibrate
-smoke-local: ## Train 0.8B on CPU for a few steps — proves the path without Modal
+.PHONY: smoke-local train-local calibrate-local smoke train calibrate
+smoke-local: ## Train Gemma 4 E2B for a few steps — proves the path without Modal
 	uv run lev data build --out /tmp/lev-mix --limit-per-source 2000 --n-examples 4000
 	uv run lev train --preset smoke --data /tmp/lev-mix \
 		--output-dir /tmp/lev-smoke --max-steps $(STEPS)
 
-smoke: ## Modal: exercise the whole training path on 0.8B (~5 min of H100)
+train-local: ## Train PRESET on this machine's GPU; resumes the newest checkpoint (FRESH=1, RESUME=path)
+	uv run lev train --preset $(PRESET) --data $(OUT) $(if $(FRESH),--fresh,) $(if $(RESUME),--resume $(RESUME),)
+
+calibrate-local: ## Fit per-bucket temperatures for PRESET's newest local checkpoint
+	uv run lev calibrate --preset $(PRESET) --data $(OUT)
+
+smoke: ## Modal: exercise the whole training path on Gemma 4 E2B
 	modal run modal/app.py::smoke
 
 train: ## Modal: the real run; resumes the newest checkpoint (FRESH=1 to start over, RESUME=path)

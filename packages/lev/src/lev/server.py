@@ -12,8 +12,10 @@ from typing import Any, Literal
 # Module level: FastAPI resolves the endpoint's string annotations here.
 from fastapi import Request
 
+from .backbone import Quantize
 from .batcher import Batcher, ClientGone, Overloaded, WorkerStopped
 from .model import load
+from .prompt import PromptStyle
 from .types import SystemOneRequest, SystemOneResponse
 
 
@@ -21,12 +23,14 @@ def create_app(
     checkpoint_dir: str | None = None,
     model_cache: str | None = None,
     calibration: str | None = None,
-    model_id: str = "Qwen/Qwen3.5-4B-Base",
+    model_id: str = "google/gemma-4-E4B-it",
     noul_readout: Literal["rating", "binary"] | None = None,
     compile: bool = False,
     max_label_options: int | None = None,
-    prompt_style: Literal["plain", "chat"] | None = None,
+    prompt_style: PromptStyle | None = None,
     skip_multi_token_codes: bool = True,
+    quantize: Quantize = None,
+    offload_per_layer_embeddings: bool = False,
     max_pending: int = 64,
     max_batch_tokens: int = 16384,
     timeout: float = 30.0,
@@ -51,6 +55,8 @@ def create_app(
             compile=compile,
             max_label_options=max_label_options,
             skip_multi_token_codes=skip_multi_token_codes,
+            quantize=quantize,
+            offload_per_layer_embeddings=offload_per_layer_embeddings,
         )
         state["batcher"] = Batcher(
             engine, max_pending=max_pending, max_batch_tokens=max_batch_tokens, timeout=timeout

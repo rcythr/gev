@@ -253,7 +253,7 @@ class TestModeAProjectsOnlyTheAnswerPositions:
         seen = {}
 
         class FakeModel:
-            def __call__(self, input_ids, attention_mask, logits_to_keep):
+            def __call__(self, input_ids, attention_mask, logits_to_keep, use_cache):
                 seen["keep"] = logits_to_keep.tolist()
                 b, v = input_ids.shape[0], 10
                 # logits[row, j, tok] = 100*row + 10*keep[j] + tok, so the value
@@ -276,3 +276,29 @@ class TestModeAProjectsOnlyTheAnswerPositions:
         out = candidate_logits(FakeModel(), batch)
         assert seen["keep"] == [4, 7], "only the distinct answer positions are projected"
         assert out.tolist() == [[71.0, 72.0], [141.0, 142.0], [273.0, 274.0]]
+
+
+def test_gradient_accumulation_still_covers_every_row(tmp_path, monkeypatch):
+    """`step` counts micro-batches: sizing the run in optimiser steps would stop
+    after 1/`grad_accum` of the data."""
+    from dataclasses import replace
+
+    import lev.train.loop as loop
+
+    seen: list[int] = []
+    stub_backbone(monkeypatch, loop)
+    monkeypatch.setattr(
+        loop, "save_checkpoint", lambda m, h, tk, out, step, cb=None, state=None: None
+    )
+    original = loop.DecisionCollator.__call__
+    monkeypatch.setattr(
+        loop.DecisionCollator,
+        "__call__",
+        lambda self, examples: seen.append(len(examples)) or original(self, examples),
+    )
+
+    config = replace(smoke_config(tmp_path, epochs=1, checkpoint_every=0), grad_accum=4)
+    summary = loop.run_training(config, str(tmp_path))
+
+    assert sum(seen) == 64, f"one epoch must see all 64 rows, saw {sum(seen)}"
+    assert summary["steps"] == 32
