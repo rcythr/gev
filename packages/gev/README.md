@@ -1,7 +1,5 @@
 # gev
 
-Pronounced _jev_ (/dʒɛv/), soft G, same as Jev.
-
 An open System One decision model. Give it a state and typed questions (yes/no, choice, score), and it answers all of them in one forward pass with calibrated probabilities over exactly the options you supplied. A LoRA adapter on Gemma 4 E4B, served over TypeSafe's `/v1/systemone` protocol. A fork of [lev](https://github.com/InterfazeAI/lev).
 
 ```bash

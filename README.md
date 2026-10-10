@@ -6,13 +6,13 @@
 
 # gev
 
-> **Pronunciation: gev is pronounced with a soft g (/dʒɛv/) as in gem or gemma**. _gif_ is also pronounced this way because its creator says so. The creator decides, however deranged. The confusion with Jev in spoken conversation is unfortunate but acceptable.
+> **gev is pronounced with a soft G (/dʒɛv/), as in _gem_ or _Gemma_.** Same rule as _gif_: the creator decides, however deranged. Yes, out loud it sounds exactly like Jev. We've made our peace with that.
 
 gev is an open System One decision model on **Gemma 4 E4B**, and the harness that measures it. Give it a **state** (text, a ticket, an email, or JSON) and a set of typed questions (yes/no, choice, score), and it answers all of them in one forward pass, reading each answer from logits it already computed. It returns calibrated probabilities over exactly the options you supplied and generates no tokens. The model is a LoRA adapter on `google/gemma-4-E4B-it`; the wire protocol is TypeSafe's `/v1/systemone`, so any TypeSafe client works against it by changing the base URL.
 
 gev is a fork of [lev](https://github.com/InterfazeAI/lev), which built the same system on Qwen3.5-4B. The engine, readouts, calibration, data pipeline and benchmark harness are lev's; gev moves the backbone to Gemma 4 E4B and the training to a DGX Spark, a rented H100 or Google Colab ([ADR-031](docs/DECISIONS.md#adr-031--gemma-4-e4b-replaces-qwen35-4b-trained-in-bf16-on-a-dgx-spark-or-an-h100)).
 
-<p align="center"><a href="https://github.com/rcythr/gev/actions/workflows/ci.yml"><img src="https://github.com/rcythr/gev/actions/workflows/ci.yml/badge.svg" alt="CI"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2a78d6?style=flat-square" alt="Apache-2.0"></a> <img src="https://img.shields.io/badge/base-Gemma%204%20E4B-2a78d6?style=flat-square" alt="Gemma 4 E4B"> <img src="https://img.shields.io/badge/pronounced-%2Fd%CA%92%C9%9Bv%2F%20(like%20Jev)-2a78d6?style=flat-square" alt="Pronounced /dʒɛv/, like Jev"> <img src="https://img.shields.io/badge/output%20tokens-0-2a78d6?style=flat-square" alt="Zero output tokens"></p>
+<p align="center"><a href="https://github.com/rcythr/gev/actions/workflows/ci.yml"><img src="https://github.com/rcythr/gev/actions/workflows/ci.yml/badge.svg" alt="CI"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2a78d6?style=flat-square" alt="Apache-2.0"></a> <img src="https://img.shields.io/badge/base-Gemma%204%20E4B-2a78d6?style=flat-square" alt="Gemma 4 E4B"> <img src="https://img.shields.io/badge/output%20tokens-0-2a78d6?style=flat-square" alt="Zero output tokens"></p>
 
 <p align="center"><a href="#status"><strong>Status</strong></a> · <a href="#train-it">Train it</a> · <a href="#quickstart">Quickstart</a> · <a href="#why-it-works">Why it works</a> · <a href="#the-baseline-to-beat">Baseline</a> · <a href="#measure-it-yourself">Benchmark harness</a> · <a href="#watch-it-decide">Snake demo</a> · <a href="docs/DECISIONS.md">Decision log</a></p>
 
