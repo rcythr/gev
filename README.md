@@ -6,7 +6,7 @@
 
 # gev
 
-> **Pronunciation: gev is pronounced _jev_ (/dʒɛv/), exactly like Jev.** The G is soft, as in _gif_ the way its creator says it, and as in _gem_, which is where the G came from. The creator decides, however deranged. A hard G is a bug report we will close as "won't fix".
+> **Pronunciation: gev is pronounced with a soft g (/dʒɛv/) as in gem or gemma**. _gif_ is also pronounced this way because its creator says so. The creator decides, however deranged. The confusion with Jev in spoken conversation is unfortunate but acceptable.
 
 gev is an open System One decision model on **Gemma 4 E4B**, and the harness that measures it. Give it a **state** (text, a ticket, an email, or JSON) and a set of typed questions (yes/no, choice, score), and it answers all of them in one forward pass, reading each answer from logits it already computed. It returns calibrated probabilities over exactly the options you supplied and generates no tokens. The model is a LoRA adapter on `google/gemma-4-E4B-it`; the wire protocol is TypeSafe's `/v1/systemone`, so any TypeSafe client works against it by changing the base URL.
 
