@@ -6,11 +6,13 @@
 
 # gev
 
+> **Pronunciation: gev is pronounced _jev_ (/dʒɛv/), exactly like Jev.** The G is soft, as in _gif_ the way its creator says it, and as in _gem_, which is where the G came from. The creator decides, however deranged. A hard G is a bug report we will close as "won't fix".
+
 gev is an open System One decision model on **Gemma 4 E4B**, and the harness that measures it. Give it a **state** (text, a ticket, an email, or JSON) and a set of typed questions (yes/no, choice, score), and it answers all of them in one forward pass, reading each answer from logits it already computed. It returns calibrated probabilities over exactly the options you supplied and generates no tokens. The model is a LoRA adapter on `google/gemma-4-E4B-it`; the wire protocol is TypeSafe's `/v1/systemone`, so any TypeSafe client works against it by changing the base URL.
 
 gev is a fork of [lev](https://github.com/InterfazeAI/lev), which built the same system on Qwen3.5-4B. The engine, readouts, calibration, data pipeline and benchmark harness are lev's; gev moves the backbone to Gemma 4 E4B and the training to a DGX Spark, a rented H100 or Google Colab ([ADR-031](docs/DECISIONS.md#adr-031--gemma-4-e4b-replaces-qwen35-4b-trained-in-bf16-on-a-dgx-spark-or-an-h100)).
 
-<p align="center"><a href="https://github.com/rcythr/gev/actions/workflows/ci.yml"><img src="https://github.com/rcythr/gev/actions/workflows/ci.yml/badge.svg" alt="CI"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2a78d6?style=flat-square" alt="Apache-2.0"></a> <img src="https://img.shields.io/badge/base-Gemma%204%20E4B-2a78d6?style=flat-square" alt="Gemma 4 E4B"> <img src="https://img.shields.io/badge/output%20tokens-0-2a78d6?style=flat-square" alt="Zero output tokens"></p>
+<p align="center"><a href="https://github.com/rcythr/gev/actions/workflows/ci.yml"><img src="https://github.com/rcythr/gev/actions/workflows/ci.yml/badge.svg" alt="CI"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2a78d6?style=flat-square" alt="Apache-2.0"></a> <img src="https://img.shields.io/badge/base-Gemma%204%20E4B-2a78d6?style=flat-square" alt="Gemma 4 E4B"> <img src="https://img.shields.io/badge/pronounced-%2Fd%CA%92%C9%9Bv%2F%20(like%20Jev)-2a78d6?style=flat-square" alt="Pronounced /dʒɛv/, like Jev"> <img src="https://img.shields.io/badge/output%20tokens-0-2a78d6?style=flat-square" alt="Zero output tokens"></p>
 
 <p align="center"><a href="#status"><strong>Status</strong></a> · <a href="#train-it">Train it</a> · <a href="#quickstart">Quickstart</a> · <a href="#why-it-works">Why it works</a> · <a href="#the-baseline-to-beat">Baseline</a> · <a href="#measure-it-yourself">Benchmark harness</a> · <a href="#watch-it-decide">Snake demo</a> · <a href="docs/DECISIONS.md">Decision log</a></p>
 
