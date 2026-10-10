@@ -24,10 +24,13 @@ class Gpu:
 
 # Measured on the released Qwen3.5 4b-instruct run (2.46e18 FLOPs in 7.8 h). docs/TRAINING.md.
 H100 = Gpu("H100 80GB", 80.0, 8.75e13)
-# Scales the H100 figure by peak dense bf16 throughput; unmeasured. Spark's 128 GB is
-# unified memory shared with the OS; ~119 GB is visible to CUDA.
+# The rest scale the H100 figure by peak dense bf16 throughput; unmeasured. Spark's
+# 128 GB is unified memory shared with the OS; ~119 GB is visible to CUDA.
 DGX_SPARK = Gpu("DGX Spark (GB10)", 119.0, 8.8e12)
-GPUS = {"h100": H100, "spark": DGX_SPARK}
+A100_80 = Gpu("A100 80GB", 80.0, 2.76e13)
+A100_40 = Gpu("A100 40GB", 40.0, 2.76e13)
+L4 = Gpu("L4 24GB", 24.0, 1.07e13)
+GPUS = {"h100": H100, "a100-80": A100_80, "a100-40": A100_40, "l4": L4, "spark": DGX_SPARK}
 
 
 @dataclass
@@ -90,6 +93,8 @@ class TrainConfig:
     checkpoint_every: int = 2_000
     log_every: int = 25
     output_dir: str = "checkpoints/lev"
+    # Older `step-N` directories are deleted past this many; None keeps all.
+    keep_last: int | None = None
 
     @property
     def tokens_per_epoch(self) -> int:

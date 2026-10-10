@@ -244,7 +244,11 @@ make calibrate-local PRESET=e4b-instruct         # -> checkpoints/lev-e4b-instru
 
 The same commands run on any single H100 or A100 80GB box; `make train PRESET=e4b-instruct` runs it on Modal instead. Gemma 4 is gated on the Hub: accept its licence and `huggingface-cli login` first. Training stops before loading weights if the `gemma` framing differs from the tokenizer's chat template, and prints both; update `CHAT_FRAMES` in `lev/prompt.py` to the template's. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: length-bucketed batches otherwise fragment the allocator.
 
-A free Colab T4 will not do: 16 GB is about E4B's bf16 weights alone, and Turing has no native bf16. A Colab A100 runtime will.
+### Training on Colab
+
+[`notebooks/train_colab.ipynb`](../notebooks/train_colab.ipynb) runs the whole path on an H100, A100 or L4 runtime: clone, install, build the mixture once to Google Drive, smoke, train, calibrate, try, package. It sizes the micro-batch to the card (32, 16 x 2 or 8 x 4; the optimiser batch is 32 on all of them) and keeps checkpoints on Drive with `--keep-last 2`, about 1 GB each. After a disconnect, run every cell again: training resumes where it stopped. A free T4 will not do: 16 GB is about E4B's bf16 weights alone, and Turing has no native bf16.
+
+`lev train` and `lev plan` take the same overrides the notebook uses: `--gpu {h100,a100-80,a100-40,l4,spark}` for the budget, `--per-device-batch` and `--grad-accum` to fit memory, and `--keep-last N` (train only) to bound disk.
 
 ## Step 4b — serve what you trained
 

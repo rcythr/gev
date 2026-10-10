@@ -23,6 +23,20 @@ def latest_checkpoint(output: str | Path) -> Path | None:
     return steps[-1] if steps else None
 
 
+def prune_checkpoints(output: str | Path, keep: int) -> list[Path]:
+    """Delete all but the newest `keep` `step-N` directories; return those deleted."""
+    import shutil
+
+    steps = sorted(
+        (d for d in Path(output).glob("step-*") if d.name.split("-")[1].isdigit()),
+        key=lambda d: int(d.name.split("-")[1]),
+    )
+    stale = steps[:-keep] if keep > 0 else []
+    for path in stale:
+        shutil.rmtree(path)
+    return stale
+
+
 def fetch_checkpoint(spec: str | Path, cache_dir: str | None = None) -> Path:
     """A local path as-is, else a Hub id (`hf://org/name` or `org/name`) downloaded.
 

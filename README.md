@@ -252,6 +252,8 @@ make train-local PRESET=e4b-instruct              # bf16 LoRA on this machine's 
 make calibrate-local PRESET=e4b-instruct
 ```
 
+On Colab, open [`notebooks/train_colab.ipynb`](notebooks/train_colab.ipynb) on an H100, A100 or L4 runtime; it keeps the data and checkpoints on Google Drive and resumes after a disconnect.
+
 The data build refuses any source that resolves to one of the 13 S1Bench subsets. [SETUP.md](docs/SETUP.md) covers Modal, [TRAINING.md](docs/TRAINING.md) the pipeline, and [STATUS.md](docs/STATUS.md) what has been run.
 
 ## Boundaries worth understanding

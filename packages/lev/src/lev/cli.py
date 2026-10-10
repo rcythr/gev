@@ -40,12 +40,33 @@ def _measure_tokens(config, data_dir: str, sample: int = 1500) -> dict:
     }
 
 
-def cmd_plan(args: argparse.Namespace) -> None:
-    from .train.config import GPUS, PRESETS
+def _apply_overrides(config, args: argparse.Namespace) -> None:
+    """Fit a preset to the GPU at hand; the optimiser batch is batch x accumulation."""
+    from .train.config import GPUS
 
-    config = replace(PRESETS[args.preset])
     if args.gpu:
         config.gpu = GPUS[args.gpu]
+    if args.per_device_batch:
+        config.per_device_batch = args.per_device_batch
+    if args.grad_accum:
+        config.grad_accum = args.grad_accum
+    if getattr(args, "keep_last", None):
+        config.keep_last = args.keep_last
+
+
+def _add_override_args(parser: argparse.ArgumentParser) -> None:
+    from .train.config import GPUS
+
+    parser.add_argument("--gpu", default=None, choices=sorted(GPUS), help="default: the preset's")
+    parser.add_argument("--per-device-batch", type=int, default=None)
+    parser.add_argument("--grad-accum", type=int, default=None)
+
+
+def cmd_plan(args: argparse.Namespace) -> None:
+    from .train.config import PRESETS
+
+    config = replace(PRESETS[args.preset])
+    _apply_overrides(config, args)
     if args.data:
         measured = _measure_tokens(config, args.data)
         print(
@@ -157,6 +178,7 @@ def cmd_train(args: argparse.Namespace) -> None:
     from .train.loop import run_training
 
     config = replace(PRESETS[args.preset])
+    _apply_overrides(config, args)
     if args.output_dir:
         config.output_dir = args.output_dir
     summary = run_training(
@@ -248,9 +270,7 @@ def main(argv: list[str] | None = None) -> None:
         help="measure token lengths from a built mixture instead of trusting the default",
     )
     plan_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
-    plan_parser.add_argument(
-        "--gpu", default=None, choices=["h100", "spark"], help="default: the preset's"
-    )
+    _add_override_args(plan_parser)
     plan_parser.set_defaults(func=cmd_plan)
 
     route_parser = sub.add_parser("route", help="show the readout mode per question")
@@ -381,6 +401,10 @@ def main(argv: list[str] | None = None) -> None:
     train_parser.add_argument("--data", default="data/mixture")
     train_parser.add_argument("--output-dir", default=None)
     train_parser.add_argument("--model-cache", default=None)
+    _add_override_args(train_parser)
+    train_parser.add_argument(
+        "--keep-last", type=int, default=None, help="delete all but the newest N checkpoints"
+    )
     train_parser.add_argument(
         "--max-steps", type=int, default=None, help="stop early; for smoke runs"
     )

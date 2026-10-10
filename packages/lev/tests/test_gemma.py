@@ -140,7 +140,7 @@ class TestPresets:
         for config in PRESETS.values():
             config.validate()
 
-    def test_bf16_e4b_fits_a_spark_and_an_h100(self):
+    def test_bf16_e4b_fits_every_listed_gpu(self):
         from dataclasses import replace
 
         from lev.train.config import GPUS, PRESETS

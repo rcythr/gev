@@ -302,3 +302,16 @@ def test_gradient_accumulation_still_covers_every_row(tmp_path, monkeypatch):
 
     assert sum(seen) == 64, f"one epoch must see all 64 rows, saw {sum(seen)}"
     assert summary["steps"] == 32
+
+
+def test_keep_last_prunes_older_checkpoints_by_step_number(tmp_path):
+    from lev.train.checkpoints import prune_checkpoints
+
+    for step in (2, 10, 4, 8):
+        (tmp_path / f"step-{step}").mkdir()
+    (tmp_path / "superseded-x").mkdir()
+
+    deleted = prune_checkpoints(tmp_path, 2)
+
+    assert sorted(p.name for p in deleted) == ["step-2", "step-4"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["step-10", "step-8", "superseded-x"]

@@ -16,6 +16,7 @@ from .checkpoints import (
     latest_checkpoint,
     load_checkpoint,
     load_training_state,
+    prune_checkpoints,
     save_checkpoint,
 )
 from .collate import DecisionCollator, ModeBatcher, RouteCache
@@ -407,6 +408,8 @@ def run_training(
                     state=training_state(),
                 )
                 last_saved = step
+                if config.keep_last:
+                    prune_checkpoints(output, config.keep_last)
                 # So a run that dies late still leaves its loss curve.
                 _write_history(output, history, step)
             if step >= total_steps:
@@ -417,6 +420,8 @@ def run_training(
 
     if step != last_saved:
         save_checkpoint(model, head, tokenizer, output, step, on_checkpoint, state=training_state())
+        if config.keep_last:
+            prune_checkpoints(output, config.keep_last)
     summary = _write_history(output, history, step)
     print(
         f"done: {step:,} steps in {hms(time.monotonic() - progress.start)} -> {output}",
