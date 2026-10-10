@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter
 
-from .backbone import Quantize, final_logit_softcap
+from .backbone import final_logit_softcap
 from .calibrate import CalibrationProfile
 from .labels import noul_probability
 from .prompt import (
@@ -535,8 +535,6 @@ def load(
     compile: bool = False,
     max_label_options: int | None = None,
     skip_multi_token_codes: bool = True,
-    quantize: Quantize = None,
-    offload_per_layer_embeddings: bool = False,
 ) -> DecisionEngine:
     """Load a checkpoint -- a release directory, a training output or a Hub id --
     into a ready `DecisionEngine`. With no checkpoint, serves `model_id` frozen.
@@ -547,8 +545,7 @@ def load(
     A release's `lev_release.json` names the base model and prompt style its
     weights were trained under and overrides `model_id` and `prompt_style`. The
     Mode B head and `calibration.json` beside the adapter are picked up; a
-    missing calibration is warned about, not hidden. `quantize="4bit"` and
-    `offload_per_layer_embeddings` fit Gemma E4B on a 12 GB GPU.
+    missing calibration is warned about, not hidden.
     """
     import torch
     from transformers import AutoTokenizer
@@ -580,13 +577,7 @@ def load(
         print(f"WARNING: {mismatch}")
 
     # The adapter wrapper and backbone expose different static types.
-    model: Any = load_backbone(
-        model_id,
-        dtype=torch.bfloat16,
-        cache_dir=cache_dir,
-        quantize=quantize,
-        offload_per_layer_embeddings=offload_per_layer_embeddings,
-    )
+    model: Any = load_backbone(model_id, dtype=torch.bfloat16, cache_dir=cache_dir)
 
     head = None
     if resolved:

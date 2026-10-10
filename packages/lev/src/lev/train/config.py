@@ -7,15 +7,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..backbone import Quantize
 from ..prompt import PromptStyle
 
 # ~6*N FLOPs/token forward+backward, plus ~a third for checkpointing's recompute. Holds
 # under LoRA: backward still traverses the frozen weights to reach the adapters.
 FLOPS_PER_PARAM_PER_TOKEN = 8.0
-
-# NF4 linears plus the bf16 token embedding, averaged over E4B's matmul parameters.
-NF4_BYTES_PER_PARAM = 0.75
 
 
 @dataclass(frozen=True)
@@ -28,12 +24,10 @@ class Gpu:
 
 # Measured on the released Qwen3.5 4b-instruct run (2.46e18 FLOPs in 7.8 h). docs/TRAINING.md.
 H100 = Gpu("H100 80GB", 80.0, 8.75e13)
-# The two below scale the H100 figure by peak dense bf16 throughput; unmeasured.
-# Spark's 128 GB is unified memory shared with the OS; ~119 GB is visible to CUDA.
+# Scales the H100 figure by peak dense bf16 throughput; unmeasured. Spark's 128 GB is
+# unified memory shared with the OS; ~119 GB is visible to CUDA.
 DGX_SPARK = Gpu("DGX Spark (GB10)", 119.0, 8.8e12)
-# Ampere GeForce runs bf16 at fp32-accumulate rate (~68 TFLOPS dense); NF4 dequantisation
-# makes a QLoRA run slower still.
-RTX_3080_TI = Gpu("RTX 3080 Ti 12GB", 12.0, 6.0e12)
+GPUS = {"h100": H100, "spark": DGX_SPARK}
 
 
 @dataclass
@@ -47,8 +41,6 @@ class TrainConfig:
     hidden_size: int = 2560
     dtype: str = "bfloat16"
     gpu: Gpu = H100
-    quantize: Quantize = None
-    offload_per_layer_embeddings: bool = False
 
     # LoRA leaves room for activations on one H100 (§5.2).
     use_lora: bool = True
@@ -133,21 +125,15 @@ class TrainConfig:
         return self.total_flops / self.gpu.effective_flops / 3600
 
     @property
-    def table_gb(self) -> float:
-        """The per-layer embedding table on the GPU: zero when offloaded to CPU."""
-        return 0.0 if self.offload_per_layer_embeddings else self.per_layer_embedding_params_b * 2
-
-    @property
     def weights_gb(self) -> float:
-        per_param = NF4_BYTES_PER_PARAM if self.quantize == "4bit" else 2  # bf16
-        return self.params_b * per_param + self.table_gb
+        return (self.params_b + self.per_layer_embedding_params_b) * 2  # bf16
 
     @property
     def optimizer_gb(self) -> float:
         """Weights + grads + AdamW fp32 (m, v, master). ~16 bytes/param full-FT."""
         if self.use_lora:
             return self.weights_gb + 0.3
-        return self.params_b * 16 + self.table_gb
+        return self.params_b * 16 + self.per_layer_embedding_params_b * 2
 
     @property
     def headroom_gb(self) -> float:
@@ -155,10 +141,6 @@ class TrainConfig:
 
     def summary(self) -> str:
         adaptation = f"LoRA r{self.lora_rank}" if self.use_lora else "full fine-tune"
-        if self.quantize:
-            adaptation = f"Q{adaptation} ({self.quantize} base)"
-        if self.offload_per_layer_embeddings:
-            adaptation += ", per-layer embeddings on CPU"
         prompt = f"{self.prompt_style} prompts, Mode A to the tokenizer limit"
         return "\n".join(
             [
@@ -182,7 +164,7 @@ class TrainConfig:
         if self.optimizer_gb >= self.gpu.vram_gb:
             raise ValueError(
                 f"{self.optimizer_gb:.0f} GB of optimiser state does not fit one "
-                f"{self.gpu.name}. Enable LoRA, quantize, or choose a smaller backbone."
+                f"{self.gpu.name}. Enable LoRA or choose a smaller backbone."
             )
         # A quarter of the card: the 20 GB of an H100 that held batch 32 at 128 tokens.
         if self.headroom_gb < self.gpu.vram_gb / 4:
@@ -190,8 +172,6 @@ class TrainConfig:
                 f"only {self.headroom_gb:.1f} GB left for activations. "
                 f"Expect OOM at seq_len={self.max_seq_len}."
             )
-        if (self.quantize or self.offload_per_layer_embeddings) and not self.use_lora:
-            raise ValueError("quantize and per-layer offload freeze the base: use LoRA")
         if not 0.0 <= self.schema_first_fraction <= 1.0:
             raise ValueError("schema_first_fraction must be in [0, 1]")
 
@@ -200,7 +180,7 @@ class TrainConfig:
 PRESETS: dict[str, TrainConfig] = {
     "e4b": TrainConfig(),
     # A lower learning rate preserves the instruct backbone's existing abilities (ADR-020).
-    # Sized for a DGX Spark: bf16 LoRA fits its unified memory with the H100 batch.
+    # Budgeted for a DGX Spark; `lev plan --gpu h100` prices the same run on an H100.
     "e4b-instruct": TrainConfig(
         model_id="google/gemma-4-E4B-it",
         learning_rate=5e-5,
@@ -208,27 +188,12 @@ PRESETS: dict[str, TrainConfig] = {
         gpu=DGX_SPARK,
         output_dir="checkpoints/lev-e4b-instruct",
     ),
-    # QLoRA for a 12 GB card: 32 rows per optimiser step, as above, at batch 4.
-    "e4b-instruct-12gb": TrainConfig(
-        model_id="google/gemma-4-E4B-it",
-        learning_rate=5e-5,
-        prompt_style="gemma",
-        gpu=RTX_3080_TI,
-        quantize="4bit",
-        offload_per_layer_embeddings=True,
-        per_device_batch=4,
-        grad_accum=8,
-        max_seq_len=1_024,
-        output_dir="checkpoints/lev-e4b-instruct-12gb",
-    ),
     "smoke": TrainConfig(
         model_id="google/gemma-4-E2B-it",
         params_b=2.3,
         per_layer_embedding_params_b=2.3,
         hidden_size=1536,
         prompt_style="gemma",
-        # Fits a 12 GB card in bf16, and keeps a CPU run's resident set smaller.
-        offload_per_layer_embeddings=True,
         n_examples=2_000,
         epochs=1,
         max_seq_len=1_024,

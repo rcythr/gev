@@ -30,11 +30,6 @@ train = [
     "huggingface-hub>=1.0",
     "safetensors>=0.4",
 ]
-# QLoRA: the 4-bit base that fits Gemma E4B training on a 12 GB GPU.
-qlora = [
-    "lev[train]",
-    "bitsandbytes>=0.45",
-]
 serve = [
     "lev[train]",
     "fastapi>=0.115",

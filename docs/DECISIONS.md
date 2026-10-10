@@ -606,22 +606,22 @@ Serving now skips by default; training does not, so Mode B keeps its data. Mode 
 
 ---
 
-## ADR-031 — Gemma 4 E4B replaces Qwen3.5-4B, sized for a DGX Spark or a 12 GB card
+## ADR-031 — Gemma 4 E4B replaces Qwen3.5-4B, trained in bf16 on a DGX Spark or an H100
 
 **Accepted; untrained.**
 
-**Decision.** The backbone is `google/gemma-4-E4B-it`, fine-tuned locally rather than on a rented H100. Two presets cover the two machines: `e4b-instruct` (bf16 LoRA r32, batch 32, DGX Spark) and `e4b-instruct-12gb` (QLoRA on an NF4 base, batch 4 x 8 accumulation, RTX 3080 Ti). Both keep the recipe ADR-020 and ADR-027 settled on: instruct weights, lr 5e-5, the backbone's own chat format. Every number in FINDINGS.md was measured on Qwen3.5 and does not carry over.
+**Decision.** The backbone is `google/gemma-4-E4B-it`, fine-tuned with bf16 LoRA r32 and no quantization. `e4b-instruct` keeps the recipe ADR-020 and ADR-027 settled on: instruct weights, lr 5e-5, the backbone's own chat format. It is budgeted for a DGX Spark, whose 128 GB of unified memory holds the full ~8B-parameter checkpoint with the H100 batch of 32; the same preset runs unchanged on a rented H100 (`lev plan --gpu h100`). A 12 GB card was considered and dropped: E4B's bf16 weights alone are ~15 GB, and fitting them needs a 4-bit base. Every number in FINDINGS.md was measured on Qwen3.5 and does not carry over.
 
 **What Gemma needed that Qwen did not.**
 
 1. **Final logit softcap.** Gemma's `forward` returns `30 * tanh(logits / 30)`. Training reads `forward`; the engine projects the decoder's last states through `lm_head` itself (ADR-023), and without the cap it served different logits from the ones the temperatures were fitted on. `_project` now applies the backbone's cap; `test_gemma.py` pins it to the full forward.
 2. **One checkpoint, three modalities.** `AutoModelForCausalLM` loads `Gemma4ForConditionalGeneration` with vision and audio encoders. Their attention projections reuse the names `q_proj`..`o_proj`, so LoRA's name list would have wrapped them too; they are dropped at load, and the LoRA targets are a regex that excludes them anyway.
-3. **Per-layer embeddings.** E4B multiplies through ~4.5B parameters per token but carries ~8B: a ~2.8B per-layer embedding table it only looks up. bf16 weights plus the table do not leave a 12 GB card room to train. The 12 GB preset quantizes the matmul weights to NF4 and moves the table to CPU memory, where only the looked-up rows cross to the GPU. The Spark's 128 GB of unified memory needs neither.
+3. **Per-layer embeddings.** E4B multiplies through ~4.5B parameters per token but carries a further ~2.8B per-layer embedding table it only looks up. FLOPs count the first, memory both.
 4. **Prompt framing.** A third style, `gemma`, frames the same system and user turns as `chat` in Gemma 4's turn markers, the label read at the opening of the model turn. Training refuses to start, and serving warns, if the tokenizer's own chat template frames the turns differently; the framing was written without network access to the released tokenizer, so the check is the verification.
 
-**Found on the way.** The loop sized a run in optimiser steps but counted micro-batches, so any `grad_accum > 1` run stopped after 1/`grad_accum` of its data. No preset accumulated until the 12 GB one; it now counts micro-batches.
+**Found on the way.** The loop sized a run in optimiser steps but counted micro-batches, so any `grad_accum > 1` run stopped after 1/`grad_accum` of its data. No preset accumulates, but a smaller batch on a busy GPU would; it now counts micro-batches.
 
-**Unmeasured.** The Spark and 3080 Ti hour estimates scale the H100's measured throughput by peak bf16 rate. `avg_tokens_per_example` is still the Qwen measurement: run `lev plan --data` once the mixture is built.
+**Unmeasured.** The Spark hour estimate scales the H100's measured throughput by peak bf16 rate. `avg_tokens_per_example` is still the Qwen measurement: run `lev plan --data` once the mixture is built.
 
 ---
 

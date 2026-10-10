@@ -213,7 +213,7 @@ Throughput counts real tokens from the attention mask, not `avg_tokens_per_examp
 
 ### Resuming
 
-A run picks up where it stopped. `make train` resumes from the newest `step-N` in the preset's checkpoint directory; `FRESH=1` starts over, `RESUME=path` names a checkpoint explicitly. Each checkpoint carries the optimiser moments, the schedule position, the step and epoch, and the RNG state that reproduces the epoch's data order, so a resumed run continues at step N through the batches it had not yet seen, on the learning rate it had reached, and `history.json` extends rather than restarts. A preemption costs at most `checkpoint_every` steps -- 2,000: about 50 min of the Qwen 4b-instruct run on an H100, and longer on a Spark or 3080 Ti.
+A run picks up where it stopped. `make train` resumes from the newest `step-N` in the preset's checkpoint directory; `FRESH=1` starts over, `RESUME=path` names a checkpoint explicitly. Each checkpoint carries the optimiser moments, the schedule position, the step and epoch, and the RNG state that reproduces the epoch's data order, so a resumed run continues at step N through the batches it had not yet seen, on the learning rate it had reached, and `history.json` extends rather than restarts. A preemption costs at most `checkpoint_every` steps -- 2,000: about 50 min of the Qwen 4b-instruct run on an H100, and longer on a Spark.
 
 `FRESH=1` also moves the previous run's `step-*`, `history.json` and `calibration.json` into a `superseded-<utc>` directory beside them: left in place, a preemption's auto-resume would take the stale highest step, and `serve` would pick up the old temperatures for the new weights.
 
@@ -221,37 +221,30 @@ A weights-only checkpoint (from before [ADR-021](DECISIONS.md#adr-021--a-checkpo
 
 ### Presets
 
-The backbone is Gemma 4 E4B ([ADR-031](DECISIONS.md#adr-031--gemma-4-e4b-replaces-qwen35-4b-sized-for-a-dgx-spark-or-a-12-gb-card)).
+The backbone is Gemma 4 E4B ([ADR-031](DECISIONS.md#adr-031--gemma-4-e4b-replaces-qwen35-4b-trained-in-bf16-on-a-dgx-spark-or-an-h100)).
 
-| Preset              | Backbone                              | Adaptation                                           | GPU           | State       | Est. hours |
-| ------------------- | ------------------------------------- | ---------------------------------------------------- | ------------- | ----------- | ---------- |
-| `smoke`             | Gemma 4 E2B-it                        | LoRA r32, per-layer table on CPU                     | any / CPU     | 4.9 GB      | minutes    |
-| `e4b`               | Gemma 4 E4B (base), plain prompts     | LoRA r32                                             | H100          | 14.9 GB     | 8.8        |
-| **`e4b-instruct`**  | **Gemma 4 E4B-it**, **gemma prompts** | **LoRA r32, lr 5e-5**                                | **DGX Spark** | **14.9 GB** | **~87**    |
-| `e4b-instruct-12gb` | Gemma 4 E4B-it, gemma prompts         | QLoRA r32 (NF4), per-layer table on CPU, 4 x 8 accum | RTX 3080 Ti   | 3.7 GB      | ~128       |
+| Preset             | Backbone                              | Adaptation            | State       | H100 hours | Spark hours |
+| ------------------ | ------------------------------------- | --------------------- | ----------- | ---------- | ----------- |
+| `smoke`            | Gemma 4 E2B-it                        | LoRA r32              | 9.5 GB      | minutes    | minutes     |
+| `e4b`              | Gemma 4 E4B (base), plain prompts     | LoRA r32              | 14.9 GB     | 8.8        | ~87         |
+| **`e4b-instruct`** | **Gemma 4 E4B-it**, **gemma prompts** | **LoRA r32, lr 5e-5** | **14.9 GB** | **8.8**    | **~87**     |
 
-Hours are `make plan`'s estimates. The H100 figure is calibrated on the Qwen3.5 4b-instruct run (7.8 h measured); the Spark and 3080 Ti figures scale it by peak bf16 throughput and are unmeasured. The 128-token average they assume was measured under the Qwen tokenizer: run `uv run lev plan --preset <p> --data data/mixture` once the mixture is built. `e4b-instruct` keeps the released recipe (ADR-020, ADR-027): instruct weights, lr 5e-5, the backbone's own chat format, here the `gemma` style. The style is recorded in the release manifest and applied when serving.
+Hours are `lev plan --gpu h100|spark` estimates. The H100 figure is calibrated on the Qwen3.5 4b-instruct run (7.8 h measured); the Spark figure scales it by peak bf16 throughput and is unmeasured. The 128-token average they assume was measured under the Qwen tokenizer: run `uv run lev plan --data data/mixture` once the mixture is built. `e4b-instruct` keeps the released recipe (ADR-020, ADR-027): instruct weights, lr 5e-5, the backbone's own chat format, here the `gemma` style. The style is recorded in the release manifest and applied when serving. Everything trains in bf16; nothing is quantized.
 
-### Training locally: DGX Spark or a 12 GB card
+### Training locally on a DGX Spark, or on a rented H100
 
 ```bash
-make setup-train                                        # Spark: bf16, no bitsandbytes
-make setup-qlora                                        # 3080 Ti: adds bitsandbytes
-make data                                               # -> data/mixture
-make plan PRESET=e4b-instruct-12gb                      # budget on this card
-make smoke-local                                        # E2B, a few steps
-make train-local PRESET=e4b-instruct                    # DGX Spark
-make train-local PRESET=e4b-instruct-12gb               # RTX 3080 Ti
-make calibrate-local PRESET=e4b-instruct                # -> checkpoints/lev-e4b-instruct/calibration.json
+make setup-train                                 # torch, transformers, peft
+make data                                        # -> data/mixture
+make smoke-local STEPS=20                        # Gemma 4 E2B, a few steps: proves the path
+make plan PRESET=e4b-instruct                    # Spark budget; add --gpu h100 via `uv run lev plan`
+make train-local PRESET=e4b-instruct             # resumes the newest checkpoint; FRESH=1 starts over
+make calibrate-local PRESET=e4b-instruct         # -> checkpoints/lev-e4b-instruct/calibration.json
 ```
 
-Gemma 4 is gated on the Hub: accept its licence and `huggingface-cli login` first. Training stops before loading weights if the `gemma` framing differs from the tokenizer's chat template, and prints both; update `CHAT_FRAMES` in `lev/prompt.py` to the template's.
+The same commands run on any single H100 or A100 80GB box; `make train PRESET=e4b-instruct` runs it on Modal instead. Gemma 4 is gated on the Hub: accept its licence and `huggingface-cli login` first. Training stops before loading weights if the `gemma` framing differs from the tokenizer's chat template, and prints both; update `CHAT_FRAMES` in `lev/prompt.py` to the template's. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: length-bucketed batches otherwise fragment the allocator.
 
-On the 3080 Ti the 4-bit base, the bf16 token embedding and the adapters take ~4 GB; the per-layer embedding table (~5.6 GB in bf16) is looked up in system RAM, so budget ~20 GB of it. Loading briefly holds the table on the GPU before moving it, ~10 GB peak, so close other GPU work first. If a batch still runs out of memory, halve `per_device_batch` and double `grad_accum` in the preset: the optimiser batch stays 32. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` on both machines; length-bucketed batches otherwise fragment the allocator.
-
-**Budget the H100 for ablations, not one heroic run.**
-
----
+A free Colab T4 will not do: 16 GB is about E4B's bf16 weights alone, and Turing has no native bf16. A Colab A100 runtime will.
 
 ## Step 4b — serve what you trained
 
@@ -260,7 +253,7 @@ uv run lev serve --checkpoint checkpoints/lev-e4b-instruct --model google/gemma-
 uv run levbench eval --backend lev --tasks data/eval
 ```
 
-Or in-process: `lev.load("checkpoints/lev-e4b-instruct", model_id="google/gemma-4-E4B-it", prompt_style="gemma")`. On a 12 GB card add `--quantize 4bit --offload-per-layer-embeddings` (in-process: `quantize="4bit", offload_per_layer_embeddings=True`).
+Or in-process: `lev.load("checkpoints/lev-e4b-instruct", model_id="google/gemma-4-E4B-it", prompt_style="gemma")`.
 
 `--checkpoint` takes the output directory and resolves the newest `step-N` inside it, a flat release directory, or a Hub id. It loads the base model, applies the LoRA adapter on top, picks up `mode_b_head.pt` if it is there, and uses the `calibration.json` beside the weights unless `--calibration` overrides it. `GET /health` reports which checkpoint was resolved, whether a Mode B head loaded, whether the profile is calibrated, the Noul readout, the option cap, and requests in flight against `max_pending` — check it before reading any number off an eval.
 

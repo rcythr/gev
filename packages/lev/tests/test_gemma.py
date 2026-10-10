@@ -14,7 +14,6 @@ from lev.backbone import (  # noqa: E402
     drop_multimodal_towers,
     final_logit_softcap,
     lora_target_pattern,
-    offload_per_layer_table,
 )
 from lev.model import DecisionEngine, EngineConfig  # noqa: E402
 from lev.prompt import CHAT_FRAMES, Style, chat_template_mismatch  # noqa: E402
@@ -103,22 +102,6 @@ def test_lora_targets_only_the_language_model():
     assert adapted and all("language_model" in n for n in adapted)
 
 
-def test_offloaded_per_layer_table_gives_the_same_logits_and_stays_on_cpu():
-    model = tiny_gemma(vision=False)
-    before = full_logits(model, ROWS[0])[0]
-
-    assert offload_per_layer_table(model)
-    model.to(torch.float64).to(torch.float32)  # a `.cuda()` stand-in: moves every tracked tensor
-
-    assert not any("embed_tokens_per_layer" in n for n, _ in model.named_parameters())
-    torch.testing.assert_close(full_logits(model, ROWS[0])[0], before)
-
-
-def test_offload_is_a_no_op_without_a_per_layer_table():
-    decoder = SimpleNamespace()
-    assert not offload_per_layer_table(SimpleNamespace(get_decoder=lambda: decoder))
-
-
 class TemplateTokenizer:
     """Renders a Gemma 4 style template that trims content, as Gemma's templates do."""
 
@@ -157,19 +140,10 @@ class TestPresets:
         for config in PRESETS.values():
             config.validate()
 
-    def test_the_12gb_preset_keeps_the_optimiser_batch_of_the_spark_preset(self):
-        from lev.train.config import PRESETS
-
-        spark, small = PRESETS["e4b-instruct"], PRESETS["e4b-instruct-12gb"]
-        assert small.examples_per_step == spark.examples_per_step
-        assert small.gpu.vram_gb == 12 and small.weights_gb < 6
-
-    def test_bf16_e4b_does_not_fit_12gb(self):
-        """Why the 12 GB preset quantizes: bf16 weights plus the per-layer table alone
-        leave too little for activations."""
+    def test_bf16_e4b_fits_a_spark_and_an_h100(self):
         from dataclasses import replace
 
-        from lev.train.config import PRESETS
+        from lev.train.config import GPUS, PRESETS
 
-        with pytest.raises(ValueError):
-            replace(PRESETS["e4b-instruct-12gb"], quantize=None).validate()
+        for gpu in GPUS.values():
+            replace(PRESETS["e4b-instruct"], gpu=gpu).validate()

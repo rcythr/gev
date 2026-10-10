@@ -1,4 +1,4 @@
-# `make help` lists every target. Variables are overridable: `make train-local PRESET=e4b-instruct-12gb`.
+# `make help` lists every target. Variables are overridable: `make train-local PRESET=e4b`.
 .DEFAULT_GOAL := help
 
 PRESET  ?= e4b-instruct
@@ -22,15 +22,12 @@ help: ## Show this help
 
 ##@ Setup
 
-.PHONY: setup setup-train setup-qlora setup-serve setup-modal
+.PHONY: setup setup-train setup-serve setup-modal
 setup: ## Install the workspace
 	uv sync
 
 setup-train: ## Install with the training extras (torch, transformers, peft)
 	uv sync --extra train
-
-setup-qlora: ## Training extras plus bitsandbytes, for the 12 GB preset
-	uv sync --extra qlora
 
 setup-serve: ## Install with the serving extras (adds fastapi, uvicorn)
 	uv sync --extra serve

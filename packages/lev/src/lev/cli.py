@@ -41,9 +41,11 @@ def _measure_tokens(config, data_dir: str, sample: int = 1500) -> dict:
 
 
 def cmd_plan(args: argparse.Namespace) -> None:
-    from .train.config import PRESETS
+    from .train.config import GPUS, PRESETS
 
     config = replace(PRESETS[args.preset])
+    if args.gpu:
+        config.gpu = GPUS[args.gpu]
     if args.data:
         measured = _measure_tokens(config, args.data)
         print(
@@ -229,8 +231,6 @@ def cmd_serve(args: argparse.Namespace) -> None:
             prompt_style=args.prompt_style,
             max_pending=args.max_pending,
             max_batch_tokens=args.max_batch_tokens,
-            quantize=args.quantize,
-            offload_per_layer_embeddings=args.offload_per_layer_embeddings,
         ),
         host=args.host,
         port=args.port,
@@ -248,6 +248,9 @@ def main(argv: list[str] | None = None) -> None:
         help="measure token lengths from a built mixture instead of trusting the default",
     )
     plan_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
+    plan_parser.add_argument(
+        "--gpu", default=None, choices=["h100", "spark"], help="default: the preset's"
+    )
     plan_parser.set_defaults(func=cmd_plan)
 
     route_parser = sub.add_parser("route", help="show the readout mode per question")
@@ -298,17 +301,6 @@ def main(argv: list[str] | None = None) -> None:
         choices=PROMPT_STYLES,
         default=None,
         help="default: the release manifest's, else plain",
-    )
-    serve_parser.add_argument(
-        "--quantize",
-        choices=["4bit"],
-        default=None,
-        help="load the base in NF4 via bitsandbytes; for 12 GB GPUs",
-    )
-    serve_parser.add_argument(
-        "--offload-per-layer-embeddings",
-        action="store_true",
-        help="keep Gemma's per-layer embedding table in CPU memory",
     )
     serve_parser.add_argument(
         "--max-pending",

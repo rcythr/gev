@@ -175,13 +175,13 @@ def train(
     Resumes from the newest checkpoint in the preset's directory unless
     `--fresh`; `--resume <path>` names one explicitly.
     """
-    from lev.train.config import PRESETS
+    from lev.train.config import H100, PRESETS
     from lev.train.loop import run_training
 
     if preset not in PRESETS:
         raise ValueError(f"unknown preset {preset!r}; have {sorted(PRESETS)}")
 
-    config = replace(PRESETS[preset], output_dir=f"{CKPT_DIR}/{preset}")
+    config = replace(PRESETS[preset], output_dir=f"{CKPT_DIR}/{preset}", gpu=H100)
     config.validate()
 
     print(config.summary())
