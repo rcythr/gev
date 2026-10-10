@@ -11,7 +11,6 @@ torch = pytest.importorskip("torch")
 gemma4 = pytest.importorskip("transformers.models.gemma4")
 
 from gev.backbone import (  # noqa: E402
-    drop_multimodal_towers,
     final_logit_softcap,
     lora_target_pattern,
 )
@@ -21,7 +20,7 @@ from gev.prompt import CHAT_FRAMES, Style, chat_template_mismatch  # noqa: E402
 ROWS = [[2, 5, 6, 7, 8, 9], [2, 5, 6], [2, 5, 6, 7]]
 
 
-def tiny_gemma(vision: bool = True):
+def tiny_gemma():
     torch.manual_seed(0)
     text = gemma4.Gemma4TextConfig(
         vocab_size=512,
@@ -39,17 +38,13 @@ def tiny_gemma(vision: bool = True):
         final_logit_softcapping=30.0,
         layer_types=["sliding_attention", "full_attention"] * 2,
     )
-    vision_config = (
-        gemma4.Gemma4VisionConfig(
-            hidden_size=32,
-            intermediate_size=64,
-            num_hidden_layers=1,
-            num_attention_heads=2,
-            num_key_value_heads=2,
-            head_dim=16,
-        )
-        if vision
-        else None
+    vision_config = gemma4.Gemma4VisionConfig(
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=16,
     )
     config = gemma4.Gemma4Config(text_config=text, vision_config=vision_config)
     return gemma4.Gemma4ForConditionalGeneration(config).eval()
@@ -64,7 +59,7 @@ def full_logits(model, row):
 def test_engine_projection_applies_the_softcap_training_sees():
     """Training reads `forward`'s capped logits; the engine projects the decoder's
     states itself, so it must cap them too or temperatures fit the wrong scale."""
-    model = tiny_gemma(vision=False)
+    model = tiny_gemma()  # the encoders stay loaded; text rows must not reach them
     assert final_logit_softcap(model) == 30.0
     engine = DecisionEngine(model, SimpleNamespace(pad_token_id=0), EngineConfig())
 
@@ -74,16 +69,6 @@ def test_engine_projection_applies_the_softcap_training_sees():
         expected_logits, expected_hidden = full_logits(model, row)
         torch.testing.assert_close(logits[i], expected_logits)
         torch.testing.assert_close(hidden[i], expected_hidden)
-
-
-def test_dropping_towers_leaves_text_logits_unchanged():
-    model = tiny_gemma()
-    before = full_logits(model, ROWS[0])[0]
-
-    assert drop_multimodal_towers(model) == ["vision_tower", "embed_vision"]
-
-    assert not any("vision" in name for name, _ in model.named_parameters())
-    torch.testing.assert_close(full_logits(model, ROWS[0])[0], before)
 
 
 def test_lora_targets_only_the_language_model():
