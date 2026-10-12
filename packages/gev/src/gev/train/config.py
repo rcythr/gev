@@ -30,7 +30,15 @@ DGX_SPARK = Gpu("DGX Spark (GB10)", 119.0, 8.8e12)
 A100_80 = Gpu("A100 80GB", 80.0, 2.76e13)
 A100_40 = Gpu("A100 40GB", 40.0, 2.76e13)
 L4 = Gpu("L4 24GB", 24.0, 1.07e13)
-GPUS = {"h100": H100, "a100-80": A100_80, "a100-40": A100_40, "l4": L4, "spark": DGX_SPARK}
+A30 = Gpu("A30 24GB", 24.0, 1.46e13)
+GPUS = {
+    "h100": H100,
+    "a100-80": A100_80,
+    "a100-40": A100_40,
+    "a30": A30,
+    "l4": L4,
+    "spark": DGX_SPARK,
+}
 
 
 @dataclass
@@ -40,10 +48,14 @@ class TrainConfig:
     params_b: float = 4.5
     # Gemma E-models' per-layer embedding table: memory, but lookups, not FLOPs.
     per_layer_embedding_params_b: float = 2.8
+    # Vision and audio encoders: loaded and frozen, never run on text.
+    encoder_params_b: float = 0.5
     # Fallback only: `build_head` reads the backbone's own config.
     hidden_size: int = 2560
     dtype: str = "bfloat16"
     gpu: Gpu = H100
+    # Data-parallel ranks under `torchrun`; the optimiser batch is batch x accum x GPUs.
+    n_gpus: int = 1
 
     # LoRA leaves room for activations on one H100 (§5.2).
     use_lora: bool = True
@@ -107,11 +119,11 @@ class TrainConfig:
     @property
     def tokens_per_step(self) -> int:
         # The work per step is the padded batch, not `max_seq_len` (~16x larger).
-        return self.avg_tokens_per_example * self.per_device_batch * self.grad_accum
+        return self.avg_tokens_per_example * self.examples_per_step
 
     @property
     def examples_per_step(self) -> int:
-        return self.per_device_batch * self.grad_accum
+        return self.per_device_batch * self.grad_accum * self.n_gpus
 
     @property
     def steps_per_epoch(self) -> int:
@@ -127,18 +139,20 @@ class TrainConfig:
 
     @property
     def estimated_hours(self) -> float:
-        return self.total_flops / self.gpu.effective_flops / 3600
+        # Ideal scaling: the per-step gradient all-reduce is not counted.
+        return self.total_flops / (self.gpu.effective_flops * self.n_gpus) / 3600
 
     @property
     def weights_gb(self) -> float:
-        return (self.params_b + self.per_layer_embedding_params_b) * 2  # bf16
+        resident = self.params_b + self.per_layer_embedding_params_b + self.encoder_params_b
+        return resident * 2  # bf16, per GPU: every rank holds the whole model
 
     @property
     def optimizer_gb(self) -> float:
         """Weights + grads + AdamW fp32 (m, v, master). ~16 bytes/param full-FT."""
         if self.use_lora:
             return self.weights_gb + 0.3
-        return self.params_b * 16 + self.per_layer_embedding_params_b * 2
+        return self.params_b * 16 + (self.per_layer_embedding_params_b + self.encoder_params_b) * 2
 
     @property
     def headroom_gb(self) -> float:
@@ -159,9 +173,11 @@ class TrainConfig:
                 f"({self.examples_per_step} ex/step, ~{self.tokens_per_step:,} tok/step)",
                 f"compute          {self.total_flops:.2e} FLOPs",
                 f"time estimate    {self.estimated_hours:.1f} hours "
-                f"({self.estimated_hours / 24:.1f} days) on {self.gpu.name}",
+                f"({self.estimated_hours / 24:.1f} days) on "
+                f"{f'{self.n_gpus}x ' if self.n_gpus > 1 else ''}{self.gpu.name}",
                 f"memory           {self.optimizer_gb:.1f} GB state, "
-                f"{self.headroom_gb:.1f} GB headroom of {self.gpu.vram_gb:.0f} GB",
+                f"{self.headroom_gb:.1f} GB headroom of {self.gpu.vram_gb:.0f} GB"
+                f"{' per GPU' if self.n_gpus > 1 else ''}",
             ]
         )
 
@@ -192,6 +208,17 @@ PRESETS: dict[str, TrainConfig] = {
         prompt_style="gemma",
         gpu=DGX_SPARK,
         output_dir="checkpoints/gev-e4b-instruct",
+    ),
+    # Two A30s data-parallel: 8 rows x 2 accumulation x 2 GPUs keeps the optimiser batch at 32.
+    "e4b-instruct-2xa30": TrainConfig(
+        model_id="google/gemma-4-E4B-it",
+        learning_rate=5e-5,
+        prompt_style="gemma",
+        gpu=A30,
+        n_gpus=2,
+        per_device_batch=8,
+        grad_accum=2,
+        output_dir="checkpoints/gev-e4b-instruct-2xa30",
     ),
     "smoke": TrainConfig(
         model_id="google/gemma-4-E2B-it",

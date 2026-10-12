@@ -30,6 +30,12 @@ train = [
     "huggingface-hub>=1.0",
     "safetensors>=0.4",
 ]
+# Experiment tracking; nvidia-ml-py adds per-GPU utilisation to MLflow's system metrics.
+mlflow = [
+    "gev[train]",
+    "mlflow>=3.0",
+    "nvidia-ml-py>=12.0",
+]
 serve = [
     "gev[train]",
     "fastapi>=0.115",

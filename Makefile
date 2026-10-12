@@ -14,6 +14,8 @@ SOURCES ?=
 URL     ?= http://localhost:8000
 FRESH   ?=
 RESUME  ?=
+GPUS    ?= 1
+MLFLOW  ?=
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*?## "} \
@@ -22,12 +24,15 @@ help: ## Show this help
 
 ##@ Setup
 
-.PHONY: setup setup-train setup-serve setup-modal
+.PHONY: setup setup-train setup-mlflow setup-serve setup-modal
 setup: ## Install the workspace
 	uv sync
 
 setup-train: ## Install with the training extras (torch, transformers, peft)
 	uv sync --extra train
+
+setup-mlflow: ## Training extras plus MLflow
+	uv sync --extra mlflow
 
 setup-serve: ## Install with the serving extras (adds fastapi, uvicorn)
 	uv sync --extra serve
@@ -75,17 +80,23 @@ s1bench: ## Export the S1Bench eval subsets as gevbench task files
 
 ##@ Train
 
-.PHONY: smoke-local train-local calibrate-local smoke train calibrate
+.PHONY: smoke-local train-local calibrate-local mlflow-ui smoke train calibrate
 smoke-local: ## Train Gemma 4 E2B for a few steps — proves the path without Modal
 	uv run gev data build --out /tmp/gev-mix --limit-per-source 2000 --n-examples 4000
 	uv run gev train --preset smoke --data /tmp/gev-mix \
 		--output-dir /tmp/gev-smoke --max-steps $(STEPS)
 
-train-local: ## Train PRESET on this machine's GPU; resumes the newest checkpoint (FRESH=1, RESUME=path)
-	uv run gev train --preset $(PRESET) --data $(OUT) $(if $(FRESH),--fresh,) $(if $(RESUME),--resume $(RESUME),)
+# GPUS>1 launches one data-parallel process per GPU through torchrun.
+TRAIN_CMD = $(if $(filter-out 1,$(GPUS)),uv run torchrun --standalone --nproc_per_node $(GPUS) -m gev.cli,uv run gev)
 
-calibrate-local: ## Fit per-bucket temperatures for PRESET's newest local checkpoint
-	uv run gev calibrate --preset $(PRESET) --data $(OUT)
+train-local: ## Train PRESET here; resumes the newest checkpoint (GPUS=2, MLFLOW=1, FRESH=1, RESUME=path)
+	$(TRAIN_CMD) train --preset $(PRESET) --data $(OUT) $(if $(FRESH),--fresh,) $(if $(RESUME),--resume $(RESUME),) $(if $(MLFLOW),--mlflow,)
+
+calibrate-local: ## Fit per-bucket temperatures for PRESET's newest local checkpoint (MLFLOW=1)
+	uv run gev calibrate --preset $(PRESET) --data $(OUT) $(if $(MLFLOW),--mlflow,)
+
+mlflow-ui: ## Browse local MLflow runs at http://127.0.0.1:5000
+	uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 smoke: ## Modal: exercise the whole training path on Gemma 4 E2B
 	modal run modal/app.py::smoke

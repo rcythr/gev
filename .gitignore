@@ -140,6 +140,9 @@ cython_debug/
 checkpoints/
 runs/
 wandb/
+mlruns/
+mlartifacts/
+mlflow.db
 *.safetensors
 *.bin
 

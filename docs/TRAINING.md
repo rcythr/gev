@@ -242,7 +242,32 @@ make train-local PRESET=e4b-instruct             # resumes the newest checkpoint
 make calibrate-local PRESET=e4b-instruct         # -> checkpoints/gev-e4b-instruct/calibration.json
 ```
 
-The same commands run on any single H100 or A100 80GB box; `make train PRESET=e4b-instruct` runs it on Modal instead. Gemma 4 is gated on the Hub: accept its licence and `huggingface-cli login` first. Training stops before loading weights if the `gemma` framing differs from the tokenizer's chat template, and prints both; update `CHAT_FRAMES` in `lev/prompt.py` to the template's. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: length-bucketed batches otherwise fragment the allocator.
+The same commands run on any single H100 or A100 80GB box; `make train PRESET=e4b-instruct` runs it on Modal instead. Gemma 4 is gated on the Hub: accept its licence and `huggingface-cli login` first. Training stops before loading weights if the `gemma` framing differs from the tokenizer's chat template, and prints both; update `CHAT_FRAMES` in `gev/prompt.py` to the template's. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: length-bucketed batches otherwise fragment the allocator.
+
+### Several GPUs: 2x A30
+
+Each GPU holds the whole model (~16 GB of an A30's 24) and trains on its own share of each epoch's batches; gradients are averaged once per optimiser step. One process per GPU, launched with `torchrun`:
+
+```bash
+make train-local PRESET=e4b-instruct-2xa30 GPUS=2 MLFLOW=1
+# which runs
+uv run torchrun --standalone --nproc_per_node 2 -m gev.cli train --preset e4b-instruct-2xa30 --mlflow
+make calibrate-local PRESET=e4b-instruct-2xa30 MLFLOW=1      # one process; the model splits over both GPUs
+```
+
+`e4b-instruct-2xa30` is `e4b-instruct` at 8 rows x 2 accumulation x 2 GPUs, so the optimiser batch is the same 32; `gev plan` estimates ~26 h, scaled from the H100 figure and unmeasured. It refuses to start on one process, since that would silently halve the batch, and a checkpoint only resumes at the GPU count that wrote it. Rank 0 alone writes checkpoints, history and MLflow records; its progress line reports its own losses and the summed token rate. Any other card count works the same way: `torchrun --nproc_per_node N` with `--per-device-batch` and `--grad-accum` chosen so batch x accumulation x N is 32.
+
+### Tracking with MLflow
+
+```bash
+make setup-mlflow                                  # mlflow, nvidia-ml-py
+make train-local PRESET=e4b-instruct-2xa30 GPUS=2 MLFLOW=1
+make mlflow-ui                                     # http://127.0.0.1:5000
+```
+
+A run logs the preset as params; per-mode loss, learning rate, steps/s, tokens/s and peak GPU memory at every progress line; `history.json` at each checkpoint; and MLflow's system metrics, per-GPU utilisation included. `gev calibrate --mlflow` adds the fitted temperatures and `calibration.json` to the same run. The run id lives in the output directory (`mlflow_run_id`), so a resumed run appends to its own history instead of starting a new one.
+
+Without `MLFLOW_TRACKING_URI`, MLflow writes `./mlflow.db`. To share runs, start a server (`mlflow server --backend-store-uri sqlite:///mlflow.db --host 0.0.0.0`) and set `MLFLOW_TRACKING_URI=http://<host>:5000`; `MLFLOW_EXPERIMENT_NAME` picks the experiment (default `gev`). MLflow 3 no longer accepts the old `./mlruns` file store.
 
 ### Training on Colab
 

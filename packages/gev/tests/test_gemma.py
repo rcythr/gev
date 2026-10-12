@@ -20,11 +20,11 @@ from gev.prompt import CHAT_FRAMES, Style, chat_template_mismatch  # noqa: E402
 ROWS = [[2, 5, 6, 7, 8, 9], [2, 5, 6], [2, 5, 6, 7]]
 
 
-def tiny_gemma():
+def tiny_gemma(vocab_size: int = 512):
     torch.manual_seed(0)
     text = gemma4.Gemma4TextConfig(
-        vocab_size=512,
-        vocab_size_per_layer_input=512,
+        vocab_size=vocab_size,
+        vocab_size_per_layer_input=vocab_size,
         hidden_size=64,
         intermediate_size=128,
         num_hidden_layers=4,

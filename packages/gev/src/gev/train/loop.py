@@ -21,6 +21,7 @@ from .checkpoints import (
 )
 from .collate import DecisionCollator, ModeBatcher, RouteCache
 from .config import TrainConfig
+from .distributed import Ranks, average_gradients, setup, shard, teardown
 from .progress import ProgressLog, hms
 
 HISTORY = "history.json"
@@ -241,17 +242,68 @@ def run_training(
     on_checkpoint: Callable[[], None] | None = None,
     max_steps: int | None = None,
     fresh: bool = False,
+    mlflow: bool = False,
 ) -> dict:
     """Train, checkpointing periodically so a long run survives a preemption.
 
     With no `resume_from`, the newest `step-N` under `config.output_dir` is resumed;
     `fresh=True` starts over. Resume restores optimiser, schedule and data order, so a
     finished run trains nothing; pre-ADR-021 checkpoints restore weights only.
+
+    Under `torchrun` each process trains a data-parallel rank; rank 0 alone writes
+    checkpoints, history and MLflow records.
     """
+    from ..tracking import Tracker, start
+
+    ranks = setup()
+    if ranks.world != config.n_gpus:
+        if config.n_gpus > 1:
+            raise ValueError(
+                f"this preset trains on {config.n_gpus} GPUs, its optimiser batch split "
+                f"across them, but {ranks.world} process(es) are running. Launch it with "
+                f"`torchrun --nproc_per_node {config.n_gpus} -m gev.cli train ...`."
+            )
+        config.n_gpus = ranks.world
+    tracker = start(config.output_dir, mlflow) if ranks.main else Tracker()
+    try:
+        summary = _train(
+            config,
+            data_dir,
+            model_cache,
+            resume_from,
+            on_checkpoint,
+            max_steps,
+            fresh,
+            ranks,
+            tracker,
+        )
+    except BaseException:
+        tracker.finish("FAILED")
+        teardown(ranks)
+        raise
+    tracker.finish()
+    teardown(ranks)
+    return summary
+
+
+def _train(
+    config: TrainConfig,
+    data_dir: str,
+    model_cache: str | None,
+    resume_from: str | None,
+    on_checkpoint: Callable[[], None] | None,
+    max_steps: int | None,
+    fresh: bool,
+    ranks: Ranks,
+    tracker,
+) -> dict:
     import torch
     from torch.optim import AdamW
     from transformers import get_cosine_schedule_with_warmup
 
+    from ..tracking import flat_params
+
+    log = print if ranks.main else (lambda *args, **kwargs: None)
     config.validate()
 
     # Everything cheap and fallible happens before the model is touched.
@@ -261,11 +313,11 @@ def run_training(
 
     if resume_from is None and not fresh and (found := latest_checkpoint(output)) is not None:
         resume_from = str(found)
-        print(f"resuming from {found} (pass --fresh to start over)", flush=True)
+        log(f"resuming from {found} (pass --fresh to start over)", flush=True)
     # Move, not delete, the previous run, so auto-resume (highest step) and the
     # calibration lookup cannot pick it up.
-    if fresh and (moved := set_aside_previous_run(output)) is not None:
-        print(f"previous run moved to {moved}", flush=True)
+    if fresh and ranks.main and (moved := set_aside_previous_run(output)) is not None:
+        log(f"previous run moved to {moved}", flush=True)
 
     model, tokenizer = build_model(config, model_cache)
     head = build_head(config, model) if config.train_mode_b_head else None
@@ -291,8 +343,8 @@ def run_training(
     optimiser = AdamW(params, lr=config.learning_rate, weight_decay=config.weight_decay)
 
     train = data["train"]
-    # `step` counts micro-batches; `grad_accum` of them make one optimiser step.
-    steps_per_epoch = max(1, len(train) // config.per_device_batch)
+    # `step` counts each rank's micro-batches; `grad_accum` of them make one optimiser step.
+    steps_per_epoch = max(1, len(train) // (config.per_device_batch * ranks.world))
     total_steps = max_steps or steps_per_epoch * config.epochs
     # Sized in optimiser steps: sized in micro-steps, the cosine would finish
     # `grad_accum` times early and the tail would train at a learning rate of 0.
@@ -302,13 +354,15 @@ def run_training(
     )
 
     trainable = sum(p.numel() for p in params)
-    print(
+    log(
         f"training {len(train):,} examples x {config.epochs} epochs "
         f"= {total_steps:,} steps at batch {config.per_device_batch}"
-        f"{' x ' + str(config.grad_accum) + ' accum' if config.grad_accum > 1 else ''}  "
+        f"{' x ' + str(config.grad_accum) + ' accum' if config.grad_accum > 1 else ''}"
+        f"{' x ' + str(ranks.world) + ' GPUs' if ranks.world > 1 else ''}  "
         f"| {trainable / 1e6:.1f}M trainable params on {device}",
         flush=True,
     )
+    tracker.log_params(flat_params(config) | {"trainable_params": str(trainable)})
 
     rng = random.Random(config.seed)
     history: list[dict] = []
@@ -317,20 +371,28 @@ def run_training(
     skip_groups = 0
     last_saved = -1
     if state is not None:
+        # A step counts each rank's batches, so it means something else at another world size.
+        if state.get("world", 1) != ranks.world:
+            raise ValueError(
+                f"{resume_from} was saved by a {state.get('world', 1)}-GPU run; resume it on "
+                f"{state.get('world', 1)} GPU(s), or pass --fresh"
+            )
         optimiser.load_state_dict(state["optimiser"])
         scheduler.load_state_dict(state["scheduler"])
         step, start_epoch, skip_groups = state["step"], state["epoch"], state["step_in_epoch"]
         rng.setstate(state["rng_before_epoch"])
         history = [h for h in _read_history(output) if h["step"] < step]
         last_saved = step
-        print(
+        log(
             f"resumed at step {step:,}/{total_steps:,}: epoch {start_epoch}, "
             f"{skip_groups:,} batches in, lr {scheduler.get_last_lr()[0]:.2e}",
             flush=True,
         )
     elif resume_from:
-        print("checkpoint carries weights only; optimiser and schedule start fresh", flush=True)
-    progress = ProgressLog(total_steps, config.log_every)
+        log("checkpoint carries weights only; optimiser and schedule start fresh", flush=True)
+    progress = ProgressLog(
+        total_steps, config.log_every, on_report=tracker.log_metrics if ranks.main else None
+    )
     model.train()
 
     def training_state() -> dict:
@@ -343,7 +405,18 @@ def run_training(
             "optimiser": optimiser.state_dict(),
             "scheduler": scheduler.state_dict(),
             "rng_before_epoch": rng_before_epoch,
+            "world": ranks.world,
         }
+
+    def checkpoint() -> None:
+        if ranks.main:
+            save_checkpoint(
+                model, head, tokenizer, output, step, on_checkpoint, state=training_state()
+            )
+            if config.keep_last:
+                prune_checkpoints(output, config.keep_last)
+            _write_history(output, history, step)
+            tracker.log_artifact(output / HISTORY)
 
     for epoch in range(start_epoch, config.epochs):
         if step >= total_steps:
@@ -353,11 +426,10 @@ def run_training(
         order = list(train)
         # Shuffled before bucketing so windows differ per epoch.
         rng.shuffle(order)
-        groups = batcher(order, epoch=epoch)
+        groups = shard(list(batcher(order, epoch=epoch)), ranks)
         step_in_epoch = 0
         if epoch == start_epoch and skip_groups:
-            for _ in range(skip_groups):
-                next(groups, None)
+            groups = groups[skip_groups:]
             step_in_epoch = skip_groups
             skip_groups = 0
         for group in groups:
@@ -380,6 +452,7 @@ def run_training(
             (loss / config.grad_accum).backward()
 
             if (step + 1) % config.grad_accum == 0:
+                average_gradients(params, ranks)
                 torch.nn.utils.clip_grad_norm_(params, 1.0)
                 optimiser.step()
                 scheduler.step()
@@ -387,31 +460,22 @@ def run_training(
 
             value = float(loss.detach())
             history.append({"step": step, "epoch": epoch, "loss": value, "mode": batch.mode.value})
-            progress.record(
-                step,
-                value,
-                batch.mode.value,
-                scheduler.get_last_lr()[0],
-                tokens=int(batch.attention_mask.sum()),
-            )
+            if ranks.main:
+                # Rank 0's batches stand in for all: its own losses, tokens scaled by world.
+                progress.record(
+                    step,
+                    value,
+                    batch.mode.value,
+                    scheduler.get_last_lr()[0],
+                    tokens=int(batch.attention_mask.sum()) * ranks.world,
+                )
             step += 1
             step_in_epoch += 1
 
             if config.checkpoint_every and step % config.checkpoint_every == 0:
-                save_checkpoint(
-                    model,
-                    head,
-                    tokenizer,
-                    output,
-                    step,
-                    on_checkpoint,
-                    state=training_state(),
-                )
+                # History too, so a run that dies late still leaves its loss curve.
+                checkpoint()
                 last_saved = step
-                if config.keep_last:
-                    prune_checkpoints(output, config.keep_last)
-                # So a run that dies late still leaves its loss curve.
-                _write_history(output, history, step)
             if step >= total_steps:
                 break
         # Exit before the next iteration rebinds `epoch`: the final save reads it.
@@ -419,11 +483,12 @@ def run_training(
             break
 
     if step != last_saved:
-        save_checkpoint(model, head, tokenizer, output, step, on_checkpoint, state=training_state())
-        if config.keep_last:
-            prune_checkpoints(output, config.keep_last)
-    summary = _write_history(output, history, step)
-    print(
+        checkpoint()
+    summary = _summary(output, history, step)
+    if ranks.main:
+        _write_history(output, history, step)
+        tracker.log_artifact(output / HISTORY)
+    log(
         f"done: {step:,} steps in {hms(time.monotonic() - progress.start)} -> {output}",
         flush=True,
     )
@@ -454,13 +519,17 @@ def _read_history(output: Path) -> list[dict]:
     return json.loads(file.read_text()).get("history", [])
 
 
-def _write_history(output: Path, history: list[dict], step: int) -> dict:
-    summary = {
+def _summary(output: Path, history: list[dict], step: int) -> dict:
+    return {
         "steps": step,
         "final_loss": history[-1]["loss"] if history else None,
         "first_loss": history[0]["loss"] if history else None,
         "output_dir": str(output),
         "history": history,
     }
+
+
+def _write_history(output: Path, history: list[dict], step: int) -> dict:
+    summary = _summary(output, history, step)
     (output / HISTORY).write_text(json.dumps(summary, indent=2) + "\n")
     return summary

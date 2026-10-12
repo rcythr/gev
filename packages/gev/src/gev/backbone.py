@@ -14,16 +14,18 @@ def load_backbone(model_id: str, *, dtype, cache_dir: str | None = None) -> Any:
     import torch
     from transformers import AutoModelForCausalLM
 
+    from .train.distributed import world_size
+
+    # Under `torchrun` every rank holds a whole copy on its own GPU; otherwise several
+    # GPUs split one copy. Multi-GPU only: on an Apple machine accelerate dispatches to
+    # MPS and the process dies with SIGSEGV part-way through loading.
+    data_parallel = world_size() > 1
+    split = torch.cuda.device_count() > 1 and not data_parallel
     model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        dtype=dtype,
-        # Multi-GPU only: on an Apple machine accelerate dispatches to MPS and
-        # the process dies with SIGSEGV part-way through loading.
-        device_map="auto" if torch.cuda.device_count() > 1 else None,
-        cache_dir=cache_dir,
+        model_id, dtype=dtype, device_map="auto" if split else None, cache_dir=cache_dir
     )
-    if torch.cuda.is_available() and torch.cuda.device_count() == 1:
-        model = model.cuda()
+    if torch.cuda.is_available() and not split:
+        model = model.to(f"cuda:{torch.cuda.current_device()}")
     return model
 
 

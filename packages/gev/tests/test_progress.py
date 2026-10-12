@@ -136,3 +136,15 @@ class TestWindowedRate:
         out = capsys.readouterr().out
         # 2000 tokens over 2 s, not 4000 over 102 s.
         assert "1,000 tok/s" in out, out
+
+
+def test_each_report_reaches_the_tracker():
+    reports = []
+    log = ProgressLog(10, 5, on_report=lambda metrics, step: reports.append((step, metrics)))
+    for step in range(10):
+        log.record(step, 2.0 if step % 2 else 1.0, "label_token", 1e-4, tokens=10)
+
+    assert [step for step, _ in reports] == [5, 10]
+    metrics = reports[0][1]
+    assert metrics["loss/label_token"] == pytest.approx(1.4)
+    assert metrics["lr"] == 1e-4 and metrics["tokens_per_s"] > 0

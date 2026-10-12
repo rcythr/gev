@@ -54,17 +54,22 @@ data             200,000 examples x 128 tok x 3 epochs  = 0.08B tokens
 steps            18,750 (32 ex/step, ~4,096 tok/step)
 compute          2.76e+18 FLOPs
 time estimate    8.8 hours (0.4 days) on H100 80GB
-memory           14.9 GB state, 65.1 GB headroom of 80 GB
+memory           15.9 GB state, 64.1 GB headroom of 80 GB
 ```
 
 | GPU (`--gpu`)                           | Estimated hours | Micro-batch x accumulation |
 | --------------------------------------- | --------------: | -------------------------- |
 | H100 80GB (`h100`)                      |             8.8 | 32 x 1                     |
 | A100 80GB / 40GB (`a100-80`, `a100-40`) |            27.8 | 32 x 1 / 16 x 2            |
+| 2x A30 24GB (`a30`, data-parallel)      |              26 | 8 x 2, on each GPU         |
 | L4 24GB (`l4`)                          |              72 | 8 x 4                      |
 | DGX Spark (`spark`)                     |              87 | 32 x 1                     |
 
 The H100 figure is scaled from lev's measured Qwen run; the others scale it by peak bf16 throughput and are unmeasured. The 128-token prompt length was measured under the Qwen tokenizer: `gev plan --data` re-measures it under Gemma's. `--per-device-batch` and `--grad-accum` fit the run to the card while the optimiser batch stays 32, and `--keep-last N` bounds disk.
+
+**Several GPUs in one machine** train data-parallel: each holds the whole model and takes its share of every batch. `make train-local PRESET=e4b-instruct-2xa30 GPUS=2` launches one process per GPU through `torchrun`; the preset keeps the optimiser batch at 32 (8 rows x 2 accumulation x 2 GPUs).
+
+**MLflow** records the config, losses, learning rate, throughput, GPU use and calibration: `make setup-mlflow`, then add `MLFLOW=1` to `train-local` and `calibrate-local`, and `make mlflow-ui` to browse. Set `MLFLOW_TRACKING_URI` to log to a server instead of `./mlflow.db`.
 
 Training stops before loading the model if the `gemma` prompt framing differs from the tokenizer's own chat template, and prints both. The data build refuses any source that resolves to one of the 13 S1Bench subsets. [TRAINING.md](docs/TRAINING.md) covers the pipeline step by step; [SETUP.md](docs/SETUP.md) covers Modal.
 

@@ -12,6 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 train = ["gev[train]"]
+mlflow = ["gev[mlflow]"]
 serve = ["gev[serve]"]
 modal = ["gev[modal]"]
 demo = ["gevbench[demo]"]

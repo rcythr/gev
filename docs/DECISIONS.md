@@ -625,6 +625,22 @@ Serving now skips by default; training does not, so Mode B keeps its data. Mode 
 
 ---
 
+## ADR-032 — Data-parallel training by hand, and MLflow beside the checkpoints
+
+**Accepted; tested on CPU, not yet on GPUs.**
+
+**Decision.** Several GPUs in one machine train data-parallel under `torchrun`: every rank loads the whole model, takes every `world`-th batch of the epoch's shuffled, bucketed order, and averages its gradients with the others once per optimiser step in a single flattened all-reduce. Rank 0 alone saves checkpoints and history and talks to MLflow. Experiment tracking is opt-in (`--mlflow`) and keeps its run id in the output directory, so a resumed run, and the calibration fitted after it, append to the run that trained the weights.
+
+**Why not `DistributedDataParallel`.** The Mode B head lives outside the model and sits idle on Mode A steps, and a Mode B step runs the backbone twice before one backward (the question, then the pooled candidate strings). DDP handles those only with a second wrapper for the head and `find_unused_parameters` or `static_graph`; one all-reduce over ~70M LoRA and head parameters is simpler to reason about. The hand-written all-reduce has two rules DDP would otherwise enforce: every rank takes the same number of steps (the epoch's batches are truncated to a multiple of the world size), and every rank reduces the same tensors (a parameter it did not use contributes zeros). A parameter no rank used, the head on an all-Mode-A step, gets its gradient back as None, so AdamW skips it as it would on one GPU.
+
+**Evidence.** `test_distributed.py` trains a tiny Gemma 4 with LoRA and the Mode B head on mixed Mode A and B batches in two CPU processes over gloo, and checks the result against one process accumulating two batches per step: identical weights to 1e-4. With the all-reduce disabled the same test fails.
+
+**Guards.** The `e4b-instruct-2xa30` preset refuses to run on one process, which would silently halve its optimiser batch; a checkpoint records its world size and resumes only at that size, since a step counts each rank's batches.
+
+**Found on the way.** MLflow 3 refuses the `./mlruns` file store; runs default to `./mlflow.db` (SQLite) or a server named by `MLFLOW_TRACKING_URI`.
+
+---
+
 ## Open questions
 
 | # | Question | How it gets settled |

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -50,6 +51,8 @@ def _apply_overrides(config, args: argparse.Namespace) -> None:
         config.per_device_batch = args.per_device_batch
     if args.grad_accum:
         config.grad_accum = args.grad_accum
+    if getattr(args, "gpus", None):
+        config.n_gpus = args.gpus
     if getattr(args, "keep_last", None):
         config.keep_last = args.keep_last
 
@@ -188,7 +191,10 @@ def cmd_train(args: argparse.Namespace) -> None:
         resume_from=args.resume,
         max_steps=args.max_steps,
         fresh=args.fresh,
+        mlflow=args.mlflow,
     )
+    if os.environ.get("RANK", "0") != "0":
+        return
     print(
         f"{summary['steps']} steps  "
         f"loss {summary['first_loss']:.4f} -> {summary['final_loss']:.4f}  "
@@ -205,6 +211,12 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
         config.output_dir = args.output_dir
     result = fit_profile(config.output_dir, args.data, config=config, method=args.method)
     print(f"{len(result['temperatures'])} temperatures -> {result['profile']}")
+    if args.mlflow:
+        from .tracking import log_calibration, start
+
+        tracker = start(config.output_dir, True)
+        log_calibration(tracker, result)
+        tracker.finish()
 
 
 def cmd_release_build(args: argparse.Namespace) -> None:
@@ -271,6 +283,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     plan_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
     _add_override_args(plan_parser)
+    plan_parser.add_argument(
+        "--gpus", type=int, default=None, help="data-parallel GPUs; default: the preset's"
+    )
     plan_parser.set_defaults(func=cmd_plan)
 
     route_parser = sub.add_parser("route", help="show the readout mode per question")
@@ -403,6 +418,11 @@ def main(argv: list[str] | None = None) -> None:
     train_parser.add_argument("--model-cache", default=None)
     _add_override_args(train_parser)
     train_parser.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="log to MLflow (MLFLOW_TRACKING_URI, ..._EXPERIMENT_NAME)",
+    )
+    train_parser.add_argument(
         "--keep-last", type=int, default=None, help="delete all but the newest N checkpoints"
     )
     train_parser.add_argument(
@@ -425,6 +445,9 @@ def main(argv: list[str] | None = None) -> None:
         "--output-dir", default=None, help="the training output; default: the preset's"
     )
     calibrate_parser.add_argument("--method", default="transfer", choices=["transfer", "rows"])
+    calibrate_parser.add_argument(
+        "--mlflow", action="store_true", help="add the temperatures to the run's MLflow record"
+    )
     calibrate_parser.set_defaults(func=cmd_calibrate)
 
     args = parser.parse_args(argv)
