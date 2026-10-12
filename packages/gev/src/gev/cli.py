@@ -272,6 +272,11 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from dotenv import find_dotenv, load_dotenv
+
+    # The nearest `.env` from the working directory up fills in MLFLOW_*, HF_TOKEN and the
+    # like; variables already set in the shell win.
+    load_dotenv(find_dotenv(usecwd=True))
     parser = argparse.ArgumentParser(prog="gev", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 

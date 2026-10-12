@@ -17,6 +17,7 @@ classifiers = [
 # Keep the core importable and testable without Torch.
 dependencies = [
     "pydantic>=2.12",
+    "python-dotenv>=1.2.3",
 ]
 
 [project.optional-dependencies]
@@ -30,11 +31,13 @@ train = [
     "huggingface-hub>=1.0",
     "safetensors>=0.4",
 ]
-# Experiment tracking; nvidia-ml-py adds per-GPU utilisation to MLflow's system metrics.
+# Experiment tracking; nvidia-ml-py adds per-GPU utilisation to MLflow's system metrics,
+# boto3 uploads artifacts to a server whose artifact store is S3 or S3-compatible.
 mlflow = [
     "gev[train]",
     "mlflow>=3.0",
     "nvidia-ml-py>=12.0",
+    "boto3>=1.34",
 ]
 serve = [
     "gev[train]",

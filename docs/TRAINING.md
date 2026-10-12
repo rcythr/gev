@@ -267,7 +267,7 @@ make mlflow-ui                                     # http://127.0.0.1:5000
 
 A run logs the preset as params; per-mode loss, learning rate, steps/s, tokens/s and peak GPU memory at every progress line; `history.json` at each checkpoint; and MLflow's system metrics, per-GPU utilisation included. `gev calibrate --mlflow` adds the fitted temperatures and `calibration.json` to the same run. The run id lives in the output directory (`mlflow_run_id`), so a resumed run appends to its own history instead of starting a new one.
 
-Without `MLFLOW_TRACKING_URI`, MLflow writes `./mlflow.db`. To share runs, start a server (`mlflow server --backend-store-uri sqlite:///mlflow.db --host 0.0.0.0`) and set `MLFLOW_TRACKING_URI=http://<host>:5000`; `MLFLOW_EXPERIMENT_NAME` picks the experiment (default `gev`). MLflow 3 no longer accepts the old `./mlruns` file store.
+Without `MLFLOW_TRACKING_URI`, MLflow writes `./mlflow.db`. To share runs, start a server (`mlflow server --backend-store-uri sqlite:///mlflow.db --host 0.0.0.0`) and set `MLFLOW_TRACKING_URI=http://<host>:5000`; `MLFLOW_EXPERIMENT_NAME` picks the experiment (default `gev`). MLflow 3 no longer accepts the old `./mlruns` file store. Settings can also go in a `.env` file in or above the working directory, which `gev` loads at startup; shell variables take precedence. A server that stores artifacts in S3 or S3-compatible storage (an `s3://` artifact location, not `mlflow-artifacts:/`) has the training machine upload them itself: set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and for MinIO and similar `MLFLOW_S3_ENDPOINT_URL`.
 
 ### Training on Colab
 
