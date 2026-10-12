@@ -67,3 +67,28 @@ def test_config_flattens_to_string_params():
 
     params = flat_params(PRESETS["e4b-instruct-2xa30"])
     assert params["gpu.name"] == "A30 24GB" and params["n_gpus"] == "2"
+
+
+def test_a_fresh_training_run_opens_a_new_mlflow_run(store, monkeypatch):
+    """`--fresh` sets the run id aside with the checkpoints, before any tracker reads it."""
+    from dataclasses import replace
+
+    import gev.train.loop as loop
+    from gev.train.config import PRESETS
+
+    trackers = []
+
+    def train(config, *args):
+        trackers.append(MlflowTracker(config.output_dir, system_metrics=False))
+        trackers[-1].finish()
+        return {}
+
+    monkeypatch.setattr(loop, "_train", train)
+    config = replace(PRESETS["smoke"], output_dir=str(store))
+    loop.run_training(config, "unused")
+    loop.run_training(config, "unused")
+    loop.run_training(config, "unused", fresh=True)
+
+    first, resumed, fresh = trackers
+    assert resumed.run_id == first.run_id, "a plain rerun resumes its run"
+    assert fresh.run_id != first.run_id and not fresh.resumed

@@ -266,6 +266,9 @@ def run_training(
                 f"`torchrun --nproc_per_node {config.n_gpus} -m gev.cli train ...`."
             )
         config.n_gpus = ranks.world
+    # Before the tracker starts, so a fresh run opens a new MLflow run, not the old one.
+    if fresh and ranks.main and (moved := set_aside_previous_run(Path(config.output_dir))):
+        print(f"previous run moved to {moved}", flush=True)
     tracker = start(config.output_dir, mlflow) if ranks.main else Tracker()
     try:
         summary = _train(
@@ -316,10 +319,6 @@ def _train(
     if resume_from is None and not fresh and (found := latest_checkpoint(output)) is not None:
         resume_from = str(found)
         log(f"resuming from {found} (pass --fresh to start over)", flush=True)
-    # Move, not delete, the previous run, so auto-resume (highest step) and the
-    # calibration lookup cannot pick it up.
-    if fresh and ranks.main and (moved := set_aside_previous_run(output)) is not None:
-        log(f"previous run moved to {moved}", flush=True)
 
     model, tokenizer = build_model(config, model_cache)
     head = build_head(config, model) if config.train_mode_b_head else None
@@ -498,12 +497,15 @@ def _train(
 
 
 def set_aside_previous_run(output: Path) -> Path | None:
-    """Move prior checkpoints, history and calibration under `superseded-<utc>`.
+    """Move prior checkpoints, history, calibration and MLflow run id under `superseded-<utc>`.
 
-    Return the directory, or None if there was nothing to move.
+    Moved, not deleted, so auto-resume (highest step), the calibration lookup and the
+    MLflow tracker cannot pick them up. Return the directory, or None if nothing moved.
     """
+    from ..tracking import RUN_ID_FILE
+
     stale = list(output.glob("step-*")) + [
-        output / name for name in (HISTORY, CALIBRATION) if (output / name).exists()
+        output / name for name in (HISTORY, CALIBRATION, RUN_ID_FILE) if (output / name).exists()
     ]
     if not stale:
         return None

@@ -216,6 +216,7 @@ class TestFreshSetsAsideThePreviousRun:
         (out / "step-18750" / "adapter_model.safetensors").write_bytes(b"old")
         (out / "calibration.json").write_text("{}")
         (out / "history.json").write_text("{}")
+        (out / "mlflow_run_id").write_text("abc\n")
 
         moved = set_aside_previous_run(out)
         assert moved is not None, "nothing was set aside"
@@ -225,6 +226,7 @@ class TestFreshSetsAsideThePreviousRun:
         assert not (out / "calibration.json").exists()
         assert (moved / "step-18750" / "adapter_model.safetensors").read_bytes() == b"old"
         assert (moved / "calibration.json").is_file()
+        assert not (out / "mlflow_run_id").exists(), "a fresh run would log into the old run"
         assert set_aside_previous_run(out) is None
 
     def test_fresh_run_does_not_resume_from_a_higher_stale_step(self, tmp_path, monkeypatch):
