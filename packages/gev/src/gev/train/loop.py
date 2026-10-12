@@ -53,7 +53,9 @@ def build_model(config: TrainConfig, model_cache: str | None = None):
         dtype = torch.float32
 
     # The adapter wrapper and backbone expose different static types.
-    model: Any = load_backbone(config.model_id, dtype=dtype, cache_dir=model_cache)
+    model: Any = load_backbone(
+        config.model_id, dtype=dtype, cache_dir=model_cache, split_across_gpus=False
+    )
 
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()

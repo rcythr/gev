@@ -132,3 +132,30 @@ class TestPresets:
 
         for gpu in GPUS.values():
             replace(PRESETS["e4b-instruct"], gpu=gpu).validate()
+
+
+def test_training_loads_onto_one_gpu_even_when_several_are_visible(monkeypatch):
+    """A copy split over GPUs leaves Gemma's last hidden state on another device than the
+    `logits_to_keep` indices the loop builds, and `forward` refuses them."""
+    import gev.backbone as backbone
+    from gev.train.config import PRESETS
+    from gev.train.loop import build_model
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    device_maps = []
+
+    def from_pretrained(model_id, **kwargs):
+        device_maps.append(kwargs["device_map"])
+        return tiny_gemma()
+
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(AutoModelForCausalLM, "from_pretrained", from_pretrained)
+    monkeypatch.setattr(
+        AutoTokenizer, "from_pretrained", lambda *a, **k: SimpleNamespace(pad_token_id=0)
+    )
+
+    build_model(PRESETS["smoke"])  # training, calibration and evaluation all load here
+    backbone.load_backbone("served", dtype=torch.float32)
+
+    assert device_maps == [None, "auto"], "serving may still spread one copy over GPUs"

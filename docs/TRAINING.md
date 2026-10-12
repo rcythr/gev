@@ -252,7 +252,7 @@ Each GPU holds the whole model (~16 GB of an A30's 24) and trains on its own sha
 make train-local PRESET=e4b-instruct-2xa30 GPUS=2 MLFLOW=1
 # which runs
 uv run torchrun --standalone --nproc_per_node 2 -m gev.cli train --preset e4b-instruct-2xa30 --mlflow
-make calibrate-local PRESET=e4b-instruct-2xa30 MLFLOW=1      # one process; the model splits over both GPUs
+make calibrate-local PRESET=e4b-instruct-2xa30 MLFLOW=1      # one process, on the first GPU
 ```
 
 `e4b-instruct-2xa30` is `e4b-instruct` at 8 rows x 2 accumulation x 2 GPUs, so the optimiser batch is the same 32; `gev plan` estimates ~26 h, scaled from the H100 figure and unmeasured. It refuses to start on one process, since that would silently halve the batch, and a checkpoint only resumes at the GPU count that wrote it. Rank 0 alone writes checkpoints, history and MLflow records; its progress line reports its own losses and the summed token rate. Any other card count works the same way: `torchrun --nproc_per_node N` with `--per-device-batch` and `--grad-accum` chosen so batch x accumulation x N is 32.

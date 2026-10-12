@@ -5,8 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 
-def load_backbone(model_id: str, *, dtype, cache_dir: str | None = None) -> Any:
+def load_backbone(
+    model_id: str, *, dtype, cache_dir: str | None = None, split_across_gpus: bool = True
+) -> Any:
     """The backbone in `dtype` on the GPU (CPU without one).
+
+    With several GPUs and `split_across_gpus`, one copy is spread over them, for
+    serving. Training reads logits and hidden states with indices built on the
+    first parameter's device, so it loads whole onto one GPU instead.
 
     Gemma 4's vision and audio encoders load with it and stay frozen: text
     requests never reach them, and `lora_target_pattern` leaves them unadapted.
@@ -16,11 +22,11 @@ def load_backbone(model_id: str, *, dtype, cache_dir: str | None = None) -> Any:
 
     from .train.distributed import world_size
 
-    # Under `torchrun` every rank holds a whole copy on its own GPU; otherwise several
-    # GPUs split one copy. Multi-GPU only: on an Apple machine accelerate dispatches to
-    # MPS and the process dies with SIGSEGV part-way through loading.
+    # Under `torchrun` every rank holds a whole copy on its own GPU. Multi-GPU only: on an
+    # Apple machine accelerate dispatches to MPS and the process dies with SIGSEGV
+    # part-way through loading.
     data_parallel = world_size() > 1
-    split = torch.cuda.device_count() > 1 and not data_parallel
+    split = split_across_gpus and torch.cuda.device_count() > 1 and not data_parallel
     model = AutoModelForCausalLM.from_pretrained(
         model_id, dtype=dtype, device_map="auto" if split else None, cache_dir=cache_dir
     )
