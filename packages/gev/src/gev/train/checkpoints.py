@@ -91,11 +91,13 @@ def load_training_state(path: str | Path) -> dict | None:
     return torch.load(file, map_location="cpu", weights_only=True)
 
 
-def load_checkpoint(model, head, path: str | Path) -> None:
+def load_checkpoint(model, head, path: str | Path, untrained_head_ok: bool = False) -> None:
     """Restore adapter and head weights into existing parameter tensors.
 
     Keeping the tensors preserves optimiser references. A missing or unexpected
-    head is an error, since dropping it would discard Mode B training.
+    head is an error, since dropping it would discard Mode B training, unless
+    `untrained_head_ok`: no row of this run's data reaches the head, so one saved
+    by an earlier version is its random init.
     """
     import torch
     from peft import set_peft_model_state_dict
@@ -115,7 +117,7 @@ def load_checkpoint(model, head, path: str | Path) -> None:
             )
         device = next(model.parameters()).device
         head.load_state_dict(torch.load(head_file, map_location=device))
-    elif head_file.is_file():
+    elif head_file.is_file() and not untrained_head_ok:
         raise ValueError(
             f"{source} carries a Mode B head but this run has "
             f"`train_mode_b_head=False`; it would be dropped."

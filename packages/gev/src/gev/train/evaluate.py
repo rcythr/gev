@@ -110,7 +110,7 @@ def evaluate_split(
     from ..data.build import load_split
     from ..data.splits import Split
     from ..prompt import Style
-    from .checkpoints import load_checkpoint, resolve_checkpoint
+    from .checkpoints import MODE_B_HEAD, load_checkpoint, resolve_checkpoint
     from .collate import DecisionCollator, ModeBatcher, RouteCache
     from .config import PRESETS
     from .loop import build_head, build_model, candidate_logits, device_of, to_device
@@ -119,7 +119,9 @@ def evaluate_split(
     profile = profile or CalibrationProfile()
 
     model, tokenizer = build_model(config, None)
-    head = build_head(config, model) if config.train_mode_b_head else None
+    # A run whose option sets all fit label tokens saves no head.
+    has_head = (resolve_checkpoint(checkpoint_dir) / MODE_B_HEAD).is_file()
+    head = build_head(config, model) if config.train_mode_b_head and has_head else None
     load_checkpoint(model, head, checkpoint_dir)
     model.eval()
     if head is not None:

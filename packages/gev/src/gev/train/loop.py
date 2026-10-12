@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..prompt import Style
+from ..router import Mode
 from .checkpoints import (
     CALIBRATION,
     latest_checkpoint,
@@ -127,8 +128,6 @@ def candidate_logits(model, batch, head=None):
     candidate strings through the head: one extra short forward, not one per option.
     """
     import torch
-
-    from ..router import Mode
 
     if batch.mode is Mode.LABEL_TOKEN:
         # Project only answer positions to avoid a full (B, seq, vocab) allocation.
@@ -321,14 +320,20 @@ def _train(
         log(f"resuming from {found} (pass --fresh to start over)", flush=True)
 
     model, tokenizer = build_model(config, model_cache)
-    head = build_head(config, model) if config.train_mode_b_head else None
+    routes = RouteCache(tokenizer, config.max_label_options, Style(config.prompt_style))
+    # A head no row trains keeps its random init; saved, serving would answer with it.
+    trains_head = config.train_mode_b_head and any(
+        routes.route_for(e).mode is Mode.CANDIDATE_PATH for e in data["train"]
+    )
+    if config.train_mode_b_head and not trains_head:
+        log("every option set fits label tokens: no candidate-path head to train", flush=True)
+    head = build_head(config, model) if trains_head else None
     state = None
     if resume_from:
-        load_checkpoint(model, head, resume_from)
+        load_checkpoint(model, head, resume_from, untrained_head_ok=not trains_head)
         state = load_training_state(resume_from)
     device = device_of(model)
 
-    routes = RouteCache(tokenizer, config.max_label_options, Style(config.prompt_style))
     collator = DecisionCollator(tokenizer, max_seq_len=config.max_seq_len, routes=routes)
     batcher = ModeBatcher(
         tokenizer,

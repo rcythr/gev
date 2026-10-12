@@ -95,7 +95,7 @@ def run_resumable(
             torch.save(state, path / TRAINING_STATE)
 
     stub_backbone(monkeypatch, loop)
-    monkeypatch.setattr(loop, "load_checkpoint", lambda m, h, p: None)
+    monkeypatch.setattr(loop, "load_checkpoint", lambda m, h, p, **kwargs: None)
     monkeypatch.setattr(loop, "DecisionCollator", RecordingCollator)
     monkeypatch.setattr(loop, "save_checkpoint", fake_save)
 
@@ -317,3 +317,53 @@ def test_keep_last_prunes_older_checkpoints_by_step_number(tmp_path):
 
     assert sorted(p.name for p in deleted) == ["step-2", "step-4"]
     assert sorted(p.name for p in tmp_path.iterdir()) == ["step-10", "step-8", "superseded-x"]
+
+
+class TestUntrainedHead:
+    """With Gemma's tokenizer every option set in the mixture fits label tokens, so nothing
+    trains the candidate-path head; saved, its random init would answer wide questions."""
+
+    def run(self, tmp_path, monkeypatch, rows):
+        import gev.train.loop as loop
+
+        heads = []
+        stub_backbone(monkeypatch, loop)
+        monkeypatch.setattr(loop, "prepare_data", lambda c, d: {"train": rows, "calibration": []})
+        monkeypatch.setattr(loop, "build_head", lambda c, m=None: torch.nn.Linear(1, 1))
+        monkeypatch.setattr(
+            loop,
+            "save_checkpoint",
+            lambda m, h, tk, out, step, cb=None, state=None: heads.append(h),
+        )
+        loop.run_training(smoke_config(tmp_path, epochs=1, checkpoint_every=0), str(tmp_path))
+        return heads
+
+    def test_no_head_is_built_or_saved_when_every_row_reads_label_tokens(
+        self, tmp_path, monkeypatch
+    ):
+        rows = [an_example(a_choice(4), target=i % 4) for i in range(8)]
+        assert self.run(tmp_path, monkeypatch, rows) == [None]
+
+    def test_a_row_past_the_label_codes_still_trains_the_head(self, tmp_path, monkeypatch):
+        rows = [an_example(a_choice(4), target=0) for _ in range(6)] + [
+            an_example(a_choice(40), target=0) for _ in range(2)
+        ]
+        assert self.run(tmp_path, monkeypatch, rows)[0] is not None
+
+    def test_resume_tolerates_the_untrained_head_an_earlier_version_saved(
+        self, tmp_path, monkeypatch
+    ):
+        import peft
+        import safetensors.torch
+        from gev.train.checkpoints import load_checkpoint
+
+        step = tmp_path / "step-2"
+        step.mkdir()
+        (step / "adapter_model.safetensors").write_bytes(b"")
+        (step / "mode_b_head.pt").write_bytes(b"")
+        monkeypatch.setattr(peft, "set_peft_model_state_dict", lambda m, sd: None)
+        monkeypatch.setattr(safetensors.torch, "load_file", lambda p: {})
+
+        with pytest.raises(ValueError, match="carries a Mode B head"):
+            load_checkpoint(torch.nn.Linear(1, 1), None, step)
+        load_checkpoint(torch.nn.Linear(1, 1), None, step, untrained_head_ok=True)
