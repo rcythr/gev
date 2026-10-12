@@ -217,7 +217,8 @@ class DecisionCollator:
             padding=True,
             truncation=True,
             max_length=self.max_seq_len,
-            add_special_tokens=False,
+            # As serving encodes the prefix: Gemma needs its <bos>; Qwen adds nothing.
+            add_special_tokens=True,
         )
         # The last real token, from the mask rather than len(text): truncation
         # may have shortened the row.

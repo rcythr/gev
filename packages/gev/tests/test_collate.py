@@ -175,3 +175,24 @@ class TestLengthBucketing:
         first = [[id(e) for e in batch] for batch in batcher(rows, epoch=3)]
         second = [[id(e) for e in batch] for batch in batcher(rows, epoch=3)]
         assert first == second
+
+
+def test_prompts_get_special_tokens_as_served_and_candidates_do_not(
+    batching_tokenizer, monkeypatch
+):
+    """Serving encodes the prompt prefix with the tokenizer's special tokens (Gemma's <bos>)
+    and candidate strings without; training must encode both the same way."""
+    flags = []
+    real_call = type(batching_tokenizer).__call__
+
+    def record(self, texts, **kwargs):
+        flags.append(kwargs["add_special_tokens"])
+        return real_call(self, texts, **kwargs)
+
+    monkeypatch.setattr(type(batching_tokenizer), "__call__", record)
+    # 40 options outrun the single-letter codes, so the row also encodes a candidate pool.
+    DecisionCollator(batching_tokenizer, max_seq_len=512)([an_example(a_choice(40))])
+
+    prompt, candidates = flags
+    assert prompt is True, "a Gemma prompt without <bos> trains on inputs serving never sends"
+    assert candidates is False

@@ -16,6 +16,7 @@ FRESH   ?=
 RESUME  ?=
 GPUS    ?= 1
 MLFLOW  ?=
+ARGS    ?=
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*?## "} \
@@ -89,8 +90,8 @@ smoke-local: ## Train Gemma 4 E2B for a few steps — proves the path without Mo
 # GPUS>1 launches one data-parallel process per GPU through torchrun.
 TRAIN_CMD = $(if $(filter-out 1,$(GPUS)),uv run torchrun --standalone --nproc_per_node $(GPUS) -m gev.cli,uv run gev)
 
-train-local: ## Train PRESET here; resumes the newest checkpoint (GPUS=2, MLFLOW=1, FRESH=1, RESUME=path)
-	$(TRAIN_CMD) train --preset $(PRESET) --data $(OUT) $(if $(FRESH),--fresh,) $(if $(RESUME),--resume $(RESUME),) $(if $(MLFLOW),--mlflow,)
+train-local: ## Train PRESET here; resumes the newest checkpoint (GPUS=2, MLFLOW=1, FRESH=1, RESUME=path, ARGS=...)
+	$(TRAIN_CMD) train --preset $(PRESET) --data $(OUT) $(if $(FRESH),--fresh,) $(if $(RESUME),--resume $(RESUME),) $(if $(MLFLOW),--mlflow,) $(ARGS)
 
 calibrate-local: ## Fit per-bucket temperatures for PRESET's newest local checkpoint (MLFLOW=1)
 	uv run gev calibrate --preset $(PRESET) --data $(OUT) $(if $(MLFLOW),--mlflow,)
