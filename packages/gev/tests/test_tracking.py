@@ -92,3 +92,43 @@ def test_a_fresh_training_run_opens_a_new_mlflow_run(store, monkeypatch):
     first, resumed, fresh = trackers
     assert resumed.run_id == first.run_id, "a plain rerun resumes its run"
     assert fresh.run_id != first.run_id and not fresh.resumed
+
+
+def test_a_release_uploads_to_the_run_that_trained_it(store, tmp_path):
+    from gev import cli
+    from test_release import fake_checkpoint
+
+    out = fake_checkpoint(tmp_path)
+    training = MlflowTracker(out, system_metrics=False)
+    training.finish()
+
+    cli.main(["release", "build", "--checkpoint", str(out), "--out", str(tmp_path / "rel")])
+    assert not mlflow.MlflowClient().list_artifacts(training.run_id), "only with --mlflow"
+    cli.main(
+        ["release", "build", "--checkpoint", str(out), "--out", str(tmp_path / "rel"), "--mlflow"]
+    )
+
+    client = mlflow.MlflowClient()
+    files = {a.path for a in client.list_artifacts(training.run_id, "release")}
+    assert {"release/gev_release.json", "release/adapter_model.safetensors"} <= files
+    assert "release/training_state.pt" not in files
+
+
+def test_a_release_without_a_training_run_fails_before_copying(store, tmp_path):
+    from gev import cli
+    from test_release import fake_checkpoint
+
+    out = fake_checkpoint(tmp_path)
+    with pytest.raises(FileNotFoundError, match="trained without --mlflow"):
+        cli.main(
+            [
+                "release",
+                "build",
+                "--checkpoint",
+                str(out),
+                "--out",
+                str(tmp_path / "rel"),
+                "--mlflow",
+            ]
+        )
+    assert not (tmp_path / "rel").exists()

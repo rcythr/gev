@@ -27,6 +27,9 @@ class Tracker:
     def log_artifact(self, path: str | Path) -> None:
         pass
 
+    def log_artifacts(self, directory: str | Path, artifact_path: str) -> None:
+        pass
+
     def finish(self, status: str = "FINISHED") -> None:
         pass
 
@@ -69,8 +72,24 @@ class MlflowTracker(Tracker):
         if Path(path).is_file():
             self.mlflow.log_artifact(str(path))
 
+    def log_artifacts(self, directory: str | Path, artifact_path: str) -> None:
+        self.mlflow.log_artifacts(str(directory), artifact_path=artifact_path)
+
     def finish(self, status: str = "FINISHED") -> None:
         self.mlflow.end_run(status=status)
+
+
+def attach(output_dir: str | Path) -> MlflowTracker:
+    """The MLflow run that trained the checkpoints in `output_dir`; never a new one."""
+    if not (Path(output_dir) / RUN_ID_FILE).is_file():
+        raise FileNotFoundError(
+            f"no {RUN_ID_FILE} in {output_dir}: it was trained without --mlflow, "
+            f"so there is no run to attach to"
+        )
+    try:
+        return MlflowTracker(output_dir, system_metrics=False)
+    except ModuleNotFoundError as error:
+        raise RuntimeError("--mlflow needs the mlflow extra: uv sync --extra mlflow") from error
 
 
 def start(output_dir: str | Path, enabled: bool) -> Tracker:

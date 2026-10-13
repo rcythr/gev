@@ -110,7 +110,7 @@ calibrate: ## Modal: fit per-bucket temperatures after training
 
 ##@ Serve and release
 
-.PHONY: serve deploy release weights publish
+.PHONY: serve deploy release release-local weights publish
 serve: ## Modal: dev server on an H100 (ephemeral; any `modal run` on this app steals its URL)
 	GEV_SERVE_PRESET=$(PRESET) modal serve modal/app.py
 
@@ -119,6 +119,9 @@ deploy: ## Modal: deploy /v1/systemone with a stable URL (PRESET selects the che
 
 release: ## Modal: package the newest PRESET checkpoint into a release dir on the volume
 	modal run modal/app.py::export_checkpoint --preset $(PRESET) $(if $(NAME),--name $(NAME),)
+
+release-local: ## Package PRESET's newest local checkpoint into weights/RELEASE (MLFLOW=1 uploads it)
+	uv run gev release build --preset $(PRESET) --out weights/$(RELEASE) $(if $(NAME),--name $(NAME),) $(if $(MLFLOW),--mlflow,)
 
 weights: ## Pull a packaged release to weights/RELEASE (RELEASE=name, default PRESET)
 	mkdir -p weights

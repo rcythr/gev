@@ -221,10 +221,17 @@ def cmd_calibrate(args: argparse.Namespace) -> None:
 
 def cmd_release_build(args: argparse.Namespace) -> None:
     from .release import build_release
+    from .train.checkpoints import resolve_checkpoint
     from .train.config import PRESETS
 
+    checkpoint = args.checkpoint or PRESETS[args.preset].output_dir
+    if args.mlflow:
+        from .tracking import attach
+
+        # Fail before copying anything if there is no training run to attach to.
+        tracker = attach(resolve_checkpoint(checkpoint).parent)
     manifest = build_release(
-        args.checkpoint,
+        checkpoint,
         args.out,
         preset=args.preset,
         calibration=args.calibration,
@@ -237,6 +244,10 @@ def cmd_release_build(args: argparse.Namespace) -> None:
     )
     if not manifest["calibrated"]:
         print("  WARNING: no calibration.json; the release serves raw softmax")
+    if args.mlflow:
+        tracker.log_artifacts(args.out, "release")
+        tracker.finish()
+        print(f"  logged to MLflow run {tracker.run_id} under release/")
     print(f"\n  uv run gev serve --checkpoint {args.out}")
     print(f"  uv run gev release publish {args.out} --repo <org/name>")
 
@@ -403,12 +414,15 @@ def main(argv: list[str] | None = None) -> None:
         "build", help="copy adapter, head, tokenizer and calibration into one release dir"
     )
     build_release_parser.add_argument(
-        "--checkpoint", required=True, help="a step-N dir or its parent"
+        "--checkpoint", default=None, help="a step-N dir or its parent; default: the preset's"
     )
     build_release_parser.add_argument("--out", required=True)
     build_release_parser.add_argument("--preset", default="e4b-instruct", choices=_preset_names())
     build_release_parser.add_argument("--calibration", default=None)
     build_release_parser.add_argument("--name", default=None)
+    build_release_parser.add_argument(
+        "--mlflow", action="store_true", help="upload the release to the run that trained it"
+    )
     build_release_parser.set_defaults(func=cmd_release_build)
     publish_parser = release_sub.add_parser("publish", help="upload a release dir to the Hub")
     publish_parser.add_argument("release", help="a directory written by `gev release build`")
