@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter
 
-from .backbone import final_logit_softcap
+from .backbone import final_logit_softcap, set_lora_scale
 from .calibrate import CalibrationProfile
 from .labels import noul_probability
 from .prompt import (
@@ -155,6 +155,7 @@ class DecisionEngine:
         self.calibration = calibration or CalibrationProfile()
         self.mode_b_head = mode_b_head
         self.checkpoint: Path | None = None
+        self.lora_scale = 1.0
         self._candidate_cache: dict[tuple[str, ...], Any] = {}
         self._device = getattr(model, "device", None)
         # One forward at a time: CUDA-graph replay is not thread-safe. The server
@@ -174,6 +175,19 @@ class DecisionEngine:
             import torch
 
             self._decoder = torch.compile(self._decoder, mode="reduce-overhead", dynamic=True)
+
+    def set_lora_scale(self, scale: float) -> None:
+        """Serve the adapter at `scale` times its trained strength (0 is the frozen backbone).
+
+        Waits for any forward in flight. Calibration temperatures were fitted at 1.0, so
+        probabilities at another scale are not calibrated; accuracy is unaffected by that.
+        """
+        if self.config.compile:
+            raise RuntimeError("the scale is baked into a compiled graph: serve without --compile")
+        with self._lock:
+            if set_lora_scale(self.model, scale) == 0:
+                raise ValueError("no LoRA adapter is loaded to scale")
+            self.lora_scale = scale
 
     def warmup(
         self,
@@ -535,6 +549,7 @@ def load(
     compile: bool = False,
     max_label_options: int | None = None,
     skip_multi_token_codes: bool = True,
+    lora_scale: float = 1.0,
 ) -> DecisionEngine:
     """Load a checkpoint -- a release directory, a training output or a Hub id --
     into a ready `DecisionEngine`. With no checkpoint, serves `model_id` frozen.
@@ -611,6 +626,8 @@ def load(
     )
     engine = DecisionEngine(model, tokenizer, config, profile, mode_b_head=head)
     engine.checkpoint = resolved
+    if lora_scale != 1.0:
+        engine.set_lora_scale(lora_scale)
     if compile:
         print(f"warmup: compiled forward in {engine.warmup():.0f}s", flush=True)
     return engine

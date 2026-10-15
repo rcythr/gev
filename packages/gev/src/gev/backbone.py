@@ -52,3 +52,23 @@ def lora_target_pattern(targets: tuple[str, ...]) -> str:
     Gemma 4's vision and audio encoders reuse the names `q_proj`..`o_proj`.
     """
     return rf"^(?!.*(?:vision|visual|audio)).*\.(?:{'|'.join(targets)})$"
+
+
+def set_lora_scale(model, scale: float) -> int:
+    """Multiply every LoRA adapter's contribution by `scale`; return the layers scaled.
+
+    The adapter adds `scaling * B @ A` to each weight, so this moves the model along the line
+    from the frozen backbone (0) to the trained weights (1), and past it (above 1). The
+    original scaling is kept, so the scale is absolute: calling twice does not compound.
+    """
+    layers = 0
+    for module in model.modules():
+        scaling = getattr(module, "scaling", None)
+        if not isinstance(scaling, dict) or not hasattr(module, "lora_A"):
+            continue
+        if not hasattr(module, "_gev_base_scaling"):
+            module._gev_base_scaling = dict(scaling)
+        for name, base in module._gev_base_scaling.items():
+            scaling[name] = base * scale
+        layers += 1
+    return layers

@@ -276,6 +276,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
             prompt_style=args.prompt_style,
             max_pending=args.max_pending,
             max_batch_tokens=args.max_batch_tokens,
+            lora_scale=args.lora_scale,
+            allow_lora_scale=args.allow_lora_scale,
         ),
         host=args.host,
         port=args.port,
@@ -364,6 +366,17 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         default=16384,
         help="padded tokens per batched forward across requests (default 16384)",
+    )
+    serve_parser.add_argument(
+        "--lora-scale",
+        type=float,
+        default=1.0,
+        help="serve the adapter at this fraction of its trained strength; 0 is the frozen model",
+    )
+    serve_parser.add_argument(
+        "--allow-lora-scale",
+        action="store_true",
+        help="enable POST /admin/lora-scale so a sweep can change the scale without a restart",
     )
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)

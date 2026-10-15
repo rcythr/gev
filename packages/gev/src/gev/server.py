@@ -11,11 +11,16 @@ from typing import Any, Literal
 
 # Module level: FastAPI resolves the endpoint's string annotations here.
 from fastapi import Request
+from pydantic import BaseModel, Field
 
 from .batcher import Batcher, ClientGone, Overloaded, WorkerStopped
 from .model import load
 from .prompt import PromptStyle
 from .types import SystemOneRequest, SystemOneResponse
+
+
+class LoraScaleRequest(BaseModel):
+    scale: float = Field(ge=0.0, le=2.0)
 
 
 def create_app(
@@ -31,6 +36,8 @@ def create_app(
     max_pending: int = 64,
     max_batch_tokens: int = 16384,
     timeout: float = 30.0,
+    lora_scale: float = 1.0,
+    allow_lora_scale: bool = False,
 ) -> Any:
     from fastapi import FastAPI, HTTPException, Response
     from starlette.concurrency import run_in_threadpool
@@ -52,6 +59,7 @@ def create_app(
             compile=compile,
             max_label_options=max_label_options,
             skip_multi_token_codes=skip_multi_token_codes,
+            lora_scale=lora_scale,
         )
         state["batcher"] = Batcher(
             engine, max_pending=max_pending, max_batch_tokens=max_batch_tokens, timeout=timeout
@@ -76,11 +84,24 @@ def create_app(
             "order_average": config.order_average,
             "prefix_mode": config.prefix_mode,
             "compiled": config.compile,
+            "lora_scale": engine.lora_scale,
             "prompt_style": config.prompt_style,
             "skip_multi_token_codes": config.skip_multi_token_codes,
             "in_flight": state["batcher"].pending,
             "max_pending": max_pending,
         }
+
+    if allow_lora_scale:
+        # Unauthenticated and changes every answer: for a sweep on a machine you control.
+        @app.post("/admin/lora-scale")
+        async def set_scale(body: LoraScaleRequest) -> dict:
+            if state["engine"] is None:
+                raise HTTPException(status_code=529, detail="model still loading")
+            try:
+                await run_in_threadpool(state["engine"].set_lora_scale, body.scale)
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            return {"lora_scale": state["engine"].lora_scale}
 
     @app.post("/v1/systemone", response_model=SystemOneResponse)
     async def system_one(body: SystemOneRequest, request: Request) -> Any:

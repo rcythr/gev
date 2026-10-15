@@ -159,3 +159,83 @@ def test_training_loads_onto_one_gpu_even_when_several_are_visible(monkeypatch):
     backbone.load_backbone("served", dtype=torch.float32)
 
     assert device_maps == [None, "auto"], "serving may still spread one copy over GPUs"
+
+
+class TestLoraScale:
+    """The adapter adds `scaling * B @ A`; scaling that moves the model along the line from the
+    frozen backbone to the trained weights."""
+
+    @pytest.fixture
+    def adapted(self):
+        peft = pytest.importorskip("peft")
+        model = peft.get_peft_model(
+            tiny_gemma(),
+            peft.LoraConfig(
+                r=4,
+                lora_alpha=8,
+                lora_dropout=0.0,
+                target_modules=lora_target_pattern(("q_proj", "v_proj", "down_proj")),
+                task_type="CAUSAL_LM",
+            ),
+        ).eval()
+        torch.manual_seed(1)
+        for name, p in model.named_parameters():
+            if "lora_B" in name:
+                torch.nn.init.normal_(p, std=0.05)
+        return model
+
+    def logits(self, model):
+        with torch.no_grad():
+            return model(input_ids=torch.tensor([ROWS[0]])).logits[0, -1]
+
+    def test_zero_is_the_frozen_backbone_and_one_the_trained_model(self, adapted):
+        from gev.backbone import set_lora_scale
+
+        trained = self.logits(adapted)
+        with adapted.disable_adapter():
+            frozen = self.logits(adapted)
+        assert not torch.allclose(trained, frozen), "the adapter must change something"
+
+        assert set_lora_scale(adapted, 0.0) > 0
+        torch.testing.assert_close(self.logits(adapted), frozen)
+        set_lora_scale(adapted, 1.0)
+        torch.testing.assert_close(self.logits(adapted), trained)
+
+    def test_half_scale_is_the_halfway_point_in_weight_space(self, adapted):
+        from gev.backbone import set_lora_scale
+
+        set_lora_scale(adapted, 0.5)
+        half = self.logits(adapted)
+
+        set_lora_scale(adapted, 1.0)
+        with torch.no_grad():
+            for name, p in adapted.named_parameters():
+                if "lora_B" in name:
+                    p.mul_(0.5)
+        torch.testing.assert_close(self.logits(adapted), half)
+
+    def test_the_scale_is_absolute_not_compounding(self, adapted):
+        from gev.backbone import set_lora_scale
+
+        set_lora_scale(adapted, 0.5)
+        once = self.logits(adapted)
+        set_lora_scale(adapted, 0.5)
+        torch.testing.assert_close(self.logits(adapted), once)
+
+    def test_the_engine_scales_under_its_lock_and_refuses_without_an_adapter(self, adapted):
+        engine = DecisionEngine(adapted, SimpleNamespace(pad_token_id=0), EngineConfig())
+        before, _ = engine._forward_single([ROWS[0]], want_hidden=False)
+
+        engine.set_lora_scale(0.0)
+        frozen, _ = engine._forward_single([ROWS[0]], want_hidden=False)
+        assert engine.lora_scale == 0.0 and not torch.allclose(before, frozen)
+
+        plain = DecisionEngine(tiny_gemma(), SimpleNamespace(pad_token_id=0), EngineConfig())
+        with pytest.raises(ValueError, match="no LoRA adapter"):
+            plain.set_lora_scale(0.5)
+        compiled = DecisionEngine(
+            adapted, SimpleNamespace(pad_token_id=0), EngineConfig(compile=False)
+        )
+        compiled.config.compile = True
+        with pytest.raises(RuntimeError, match="compiled graph"):
+            compiled.set_lora_scale(0.5)

@@ -288,6 +288,19 @@ Or in-process: `gev.load("checkpoints/gev-e4b-instruct", model_id="google/gemma-
 
 A checkpoint directory is an _adapter_, not a model, so `--model` and `--prompt-style` name the base and format it was trained with — except for a packaged release, whose `gev_release.json` records both.
 
+### Scaling the adapter: frozen to trained
+
+The adapter adds `scaling x B @ A` to each weight, so multiplying `scaling` by `s` moves the served model along the line from the frozen backbone (`s = 0`) to the trained one (`s = 1`), and past it. A scale between the two often keeps most of the fine-tune's in-distribution gain while recovering behaviour the fine-tune damaged elsewhere (weight-space interpolation, as in WiSE-FT).
+
+```bash
+uv run gev serve --checkpoint weights/<release> --allow-lora-scale --port 8000     # one window
+python scripts/lora_scale_sweep.py --tasks data/s1bench                           # another; ~7 min per scale
+```
+
+The sweep sets each scale over `POST /admin/lora-scale` (no restart, no reload), runs `gevbench eval` at each, and prints accuracy per subset and scale, with raw reports in `artifacts/lora-sweep/`. `--scales 0 0.25 0.5 0.75 1` is the default. `--allow-lora-scale` is unauthenticated and changes every answer: use it only on a machine you control. `gev serve --lora-scale 0.5` serves a chosen scale for good.
+
+Compare accuracy, not ECE: the temperatures were fitted at scale 1. Scale 0 here is the frozen backbone through gev's trained-model settings (0-8 Noul rating, fitted temperatures), so it matches serving the frozen model for Choice and Score subsets but not for yes/no ones, which a frozen model reads as binary.
+
 ### Releasing the weights
 
 ```bash
