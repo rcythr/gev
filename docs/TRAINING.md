@@ -292,10 +292,16 @@ A checkpoint directory is an _adapter_, not a model, so `--model` and `--prompt-
 
 The adapter adds `scaling x B @ A` to each weight, so multiplying `scaling` by `s` moves the served model along the line from the frozen backbone (`s = 0`) to the trained one (`s = 1`), and past it. A scale between the two often keeps most of the fine-tune's in-distribution gain while recovering behaviour the fine-tune damaged elsewhere (weight-space interpolation, as in WiSE-FT).
 
+Choose the scale on data you will not report. Split the S1Bench export once, sweep on the development half, then score the held-back half a single time at the chosen scale:
+
 ```bash
+uv run gev s1bench split                                       # data/s1bench -> data/s1bench-dev, data/s1bench-test
 uv run gev serve --checkpoint weights/<release> --allow-lora-scale --port 8000     # one window
-python scripts/lora_scale_sweep.py --tasks data/s1bench                           # another; ~7 min per scale
+python scripts/lora_scale_sweep.py                             # another; scores data/s1bench-dev, ~4 min per scale
+uv run gevbench eval --backend gev --tasks data/s1bench-test   # once, at the scale it picked: the number to report
 ```
+
+Picking a scale and reporting the same data's score is optimistic, and the repo's calibration code already refuses to fit on held-out splits for the same reason. Results from the full export, before the split, are development numbers: report them as that, or not at all.
 
 The sweep sets each scale over `POST /admin/lora-scale` (no restart, no reload), runs `gevbench eval` at each, and prints accuracy per subset and scale, with raw reports in `artifacts/lora-sweep/`. `--scales 0 0.25 0.5 0.75 1` is the default. `--allow-lora-scale` is unauthenticated and changes every answer: use it only on a machine you control. `gev serve --lora-scale 0.5` serves a chosen scale for good.
 

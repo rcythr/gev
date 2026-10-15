@@ -146,3 +146,48 @@ class TestSelection:
         self.fake(monkeypatch, [EvalItem("boolq-a", {}, False)], ["boolq-a"], {"True": 1})
         with pytest.raises(ValueError, match="label counts"):
             load_eval_subset("boolq")
+
+
+class TestSplit:
+    def write_subset(self, directory, name, states):
+        import json
+
+        payload = {
+            "questions": {"decision": {"type": "noul", "instructions": "ok?"}},
+            "items": [{"state": s, "labels": {"decision": True}} for s in states],
+        }
+        (directory / f"{name}.json").write_text(json.dumps(payload))
+        (directory / "index.json").write_text("{}")
+
+    def test_every_item_lands_in_exactly_one_half_and_the_split_is_stable(self, tmp_path):
+        import json
+
+        from gev.data.s1bench import split_export, split_side
+
+        src = tmp_path / "src"
+        src.mkdir()
+        states = [f"item {i}" for i in range(400)]
+        self.write_subset(src, "a", states)
+
+        summary = split_export(src, tmp_path / "dev", tmp_path / "test")
+        dev = json.loads((tmp_path / "dev" / "a.json").read_text())["items"]
+        test = json.loads((tmp_path / "test" / "a.json").read_text())["items"]
+
+        assert summary == {"dev": {"a": len(dev)}, "test": {"a": len(test)}}
+        assert len(dev) + len(test) == 400 and 150 < len(dev) < 250
+        assert {i["state"] for i in dev}.isdisjoint(i["state"] for i in test)
+        assert all(split_side(i["state"]) == "dev" for i in dev)
+
+        # Re-exporting in another order must not move an item across the line.
+        self.write_subset(src, "a", list(reversed(states)))
+        split_export(src, tmp_path / "dev2", tmp_path / "test2")
+        again = json.loads((tmp_path / "dev2" / "a.json").read_text())["items"]
+        assert {i["state"] for i in again} == {i["state"] for i in dev}
+
+    def test_a_missing_export_says_how_to_make_one(self, tmp_path):
+        import pytest
+        from gev.data.s1bench import split_export
+
+        (tmp_path / "empty").mkdir()
+        with pytest.raises(FileNotFoundError, match="gev s1bench export"):
+            split_export(tmp_path / "empty", tmp_path / "d", tmp_path / "t")

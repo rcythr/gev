@@ -4,7 +4,7 @@
 Start the server with the runtime switch, then run this against it:
 
     uv run gev serve --checkpoint weights/<release> --allow-lora-scale --port 8000
-    python scripts/lora_scale_sweep.py --tasks data/s1bench
+    python scripts/lora_scale_sweep.py            # scores data/s1bench-dev, from `gev s1bench split`
 
 Scale 0 is the frozen backbone, 1 the trained model. Each scale runs `gevbench eval` on the
 same tasks and keeps its raw output under --out. Temperatures were fitted at scale 1, so ECE
@@ -80,7 +80,7 @@ def table(scales: list[float], by_scale: dict[float, dict[str, dict[str, float]]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--base-url", default="http://localhost:8000")
-    parser.add_argument("--tasks", default="data/s1bench")
+    parser.add_argument("--tasks", default="data/s1bench-dev")
     parser.add_argument("--scales", type=float, nargs="+", default=[0, 0.25, 0.5, 0.75, 1.0])
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--gevbench", default="uv run gevbench", help="how to invoke gevbench")

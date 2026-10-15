@@ -316,3 +316,42 @@ def export(out_dir: str | Path, subsets: list[str] | None = None) -> dict:
     }
     (out / "index.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
+
+
+SPLIT_SALT = "gev-s1bench-split-v1"
+
+
+def split_side(state) -> str:
+    """`dev` or `test` for one item, from a hash of its state: stable across re-exports,
+    independent of item order, and the same for a duplicated state."""
+    key = SPLIT_SALT + json.dumps(state, sort_keys=True, ensure_ascii=False)
+    return "dev" if hashlib.sha256(key.encode()).digest()[0] < 128 else "test"
+
+
+def split_export(src_dir: str | Path, dev_dir: str | Path, test_dir: str | Path) -> dict:
+    """Split exported S1Bench task files into a development half and a held-back half.
+
+    Choose settings (a LoRA scale, a temperature, a prompt) on `dev` only, then score `test`
+    once to report: a number reported from the data that picked the setting is optimistic.
+    """
+    src = Path(src_dir)
+    files = sorted(f for f in src.glob("*.json") if f.name != "index.json")
+    if not files:
+        raise FileNotFoundError(f"no exported subsets in {src}; run `gev s1bench export` first")
+    summary: dict[str, dict] = {}
+    for side, out_dir in (("dev", dev_dir), ("test", test_dir)):
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        counts = {}
+        for file in files:
+            payload = json.loads(file.read_text())
+            kept = [i for i in payload["items"] if split_side(i["state"]) == side]
+            if not kept:
+                raise ValueError(f"{file.name} has no {side} items")
+            (out / file.name).write_text(json.dumps({**payload, "items": kept}, indent=2) + "\n")
+            counts[file.stem] = len(kept)
+        (out / "index.json").write_text(
+            json.dumps({"suite": f"s1bench-{side}", "total_items": sum(counts.values())}) + "\n"
+        )
+        summary[side] = counts
+    return summary

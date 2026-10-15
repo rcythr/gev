@@ -176,6 +176,15 @@ def cmd_s1bench_export(args: argparse.Namespace) -> None:
     print(f"    uv run gevbench eval --backend gev --tasks {args.out} --base-url $URL")
 
 
+def cmd_s1bench_split(args: argparse.Namespace) -> None:
+    from .data.s1bench import split_export
+
+    summary = split_export(args.src, args.dev, args.test)
+    for side, counts in summary.items():
+        print(f"{side}: {sum(counts.values()):,} items in {len(counts)} subsets")
+    print(f"\n  choose settings on {args.dev}; score {args.test} once, to report")
+
+
 def cmd_train(args: argparse.Namespace) -> None:
     from .train.config import PRESETS
     from .train.loop import run_training
@@ -420,6 +429,13 @@ def main(argv: list[str] | None = None) -> None:
         help="subset names; defaults to all 13",
     )
     s1_export.set_defaults(func=cmd_s1bench_export)
+    s1_split = s1_sub.add_parser(
+        "split", help="split exported subsets into a development half and a held-back half"
+    )
+    s1_split.add_argument("--src", default="data/s1bench")
+    s1_split.add_argument("--dev", default="data/s1bench-dev")
+    s1_split.add_argument("--test", default="data/s1bench-test")
+    s1_split.set_defaults(func=cmd_s1bench_split)
 
     release_parser = sub.add_parser("release", help="package a checkpoint; publish it to the Hub")
     release_sub = release_parser.add_subparsers(dest="release_command", required=True)
